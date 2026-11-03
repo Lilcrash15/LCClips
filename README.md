@@ -34,7 +34,7 @@ Install Python 3.10+ and run `run.bat`. If FFmpeg isn't found, LCClips offers to
 ### Building the installer
 
 Every push to `main` builds the installer on GitHub Actions; download it from the run's *Artifacts*.
-Pushing a tag like `v0.2.0` also publishes it as a Release.
+To publish a Release, go to **Releases → Draft a new release** on GitHub, create a tag like `v0.2.0` and click **Publish**. The workflow builds the installer and attaches it to the release automatically.
 To build locally on Windows, install Python 3.12 and [Inno Setup 6](https://jrsoftware.org/isdl.php), then run `build.bat`.
 Before building the installer, the build runs a self-test on the packaged app (`LCClips.exe --selftest report.txt`).
 
