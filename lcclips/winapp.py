@@ -124,6 +124,31 @@ def set_startup(enabled: bool) -> None:
 
 # --------------------------------------------------------------------------- self-test (CI)
 
+def _hotkey_test() -> str:
+    """Registers a hotkey and injects it the way Stream Deck does (virtual-key
+    codes, no scan code) to prove RegisterHotKey sees injected input."""
+    from . import hotkeys
+
+    fired = threading.Event()
+    hk = hotkeys.GlobalHotkey(fired.set)
+    warn = hk.set("ctrl+alt+shift+f24")
+    if warn:
+        raise RuntimeError(warn)
+    backend = hk.backend
+    try:
+        keybd_event = ctypes.windll.user32.keybd_event
+        keys = (0x11, 0x12, 0x10, 0x87)  # Ctrl, Alt, Shift, F24
+        for vk in keys:
+            keybd_event(vk, 0, 0, 0)
+        for vk in reversed(keys):
+            keybd_event(vk, 0, 0x2, 0)  # KEYEVENTF_KEYUP
+        if not fired.wait(3):
+            raise RuntimeError("no WM_HOTKEY (no interactive desktop on this machine?)")
+    finally:
+        hk.stop()
+    return f"registered via {backend}; injected key press received"
+
+
 def _editor_test(ffmpeg: str) -> str:
     """Runs LC Editor's real HTTP API: open a clip, export Fast and Precise (2 clips joined)."""
     import json
@@ -238,13 +263,14 @@ def selftest(report: Path) -> int:
     (a --windowed exe has no console)."""
     lines, ok = [], True
 
-    def check(name: str, fn):
+    def check(name: str, fn, required: bool = True):
         nonlocal ok
         try:
             lines.append(f"PASS {name}: {fn()}")
         except Exception as e:
-            ok = False
-            lines.append(f"FAIL {name}: {type(e).__name__}: {e}")
+            if required:
+                ok = False
+            lines.append(f"{'FAIL' if required else 'INFO'} {name}: {type(e).__name__}: {e}")
 
     from . import __version__
 
@@ -283,6 +309,8 @@ def selftest(report: Path) -> int:
 
     check("recording pipeline", lambda: _pipeline_test(ff))
     check("LC Editor", lambda: _editor_test(ff))
+    if IS_WINDOWS:
+        check("hotkey (injected, like Stream Deck)", _hotkey_test, required=False)
     lines.append("RESULT " + ("PASS" if ok else "FAIL"))
     report.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1
