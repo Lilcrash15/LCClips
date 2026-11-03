@@ -27,6 +27,18 @@ FFmpeg runs at *below-normal* process priority so the game always wins.
 
 Settings are saved to `%APPDATA%\LCClips\config.json`. Logs are in the same folder (`lcclips.log`, `ffmpeg.log`).
 
+## The window
+
+LCClips uses the same look as the other LC apps (LCBot and LCAI): the same theme presets, flat buttons and orange accents. You can switch presets in the **Themes** tab.
+
+- **Clips tab**
+  - **Recent clips**: thumbnail cards of your newest clips. Click one to select it; double-click to play it.
+  - **All clips**: every clip in your clips folder, with search, length, resolution, size and whether it's shared.
+  - **Selected clip** panel: a preview, the clip's details and share link, and the buttons **Share**, **Copy link**,
+    **Download** (save a copy anywhere), **Open folder**, **Play** and **Delete** (moves the file to the Recycle Bin).
+- **Settings tab**: Capture, Audio, Files & behavior, and Share links.
+- **Top bar**: a recording indicator, status messages, your hotkey and a **Save clip** button.
+
 ## Settings
 
 - **Hotkey**: default `Alt+F10`. Click *Record…* and press any combination.
@@ -46,7 +58,7 @@ It uses your own free Cloudflare server. To set it up, follow **[server/README.m
 - **Share last clip** (in the app or the tray icon): uploads the most recent clip and copies the link.
 - **Auto-upload new clips**: every hotkey clip gets a link automatically.
 - **Upload bitrate**: before uploading, LCClips makes a smaller copy on the GPU (8 Mbps by default), so uploads are about 2–3× faster. The full-quality original stays on your PC. Set it to 0 to upload the original.
-- **My uploads…**: copy, open or delete links you've shared.
+- Copy a clip's link again, or remove it from the server, from the **Selected clip** panel.
 
 ## Tray and startup
 
@@ -74,7 +86,9 @@ Put `ffmpeg.exe` in `bin\`, then run `build.bat`. The output is in `dist\LCClips
 lcclips/config.py   settings dataclass and JSON persistence
 lcclips/audio.py    loopback + mic capture threads, mixer clocked to real time
 lcclips/capture.py  FFmpeg command builder, GPU encoder probing, segment ring, clip saving
-lcclips/app.py      tkinter settings UI, global hotkey, tray icon
+lcclips/app.py      main window (Clips / Settings / Themes), hotkey, tray icon
+lcclips/library.py  clip scanning, metadata cache, thumbnails, file actions
+lcclips/gui/theme.py  LC-line theme presets (shared look with LCBot)
 lcclips/share.py    upload client (stdlib only), thumbnails, upload history
 server/             Cloudflare Worker + R2 share server, one-click setup
 ```

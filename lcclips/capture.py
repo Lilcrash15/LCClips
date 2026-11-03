@@ -219,15 +219,18 @@ def completed_segments(seg_dir: Path) -> list[Path]:
 def concat_segments(ffmpeg: str, segs: list[Path], out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     lst = out.with_suffix(".txt")
+    tmp = out.with_name(out.name + ".part")
     lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in segs), encoding="utf-8")
     try:
         cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
-               "-i", str(lst), "-map", "0", "-c", "copy", "-movflags", "+faststart", str(out)]
+               "-i", str(lst), "-map", "0", "-c", "copy", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
         r = _run(cmd, timeout=60)
         if r.returncode != 0:
             raise RuntimeError(r.stderr.strip()[-500:])
+        tmp.replace(out)  # appear in the clips folder only once complete
     finally:
         lst.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
 
 
 # --------------------------------------------------------------------------- recorder
