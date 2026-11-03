@@ -38,6 +38,7 @@ class Config:
     audio_offset_ms: int = 0  # +delays audio, -advances it
     output_dir: str = field(default_factory=_default_clips_dir)
     ffmpeg_path: str = ""  # empty = auto-detect
+    check_updates: bool = True  # check GitHub Releases at startup and every few hours
     theme: str = "classic"  # LC-line theme preset (see gui/theme.py)
     close_to_tray: bool = True  # X button hides to the tray; quit from the tray menu
     tray_notice_shown: bool = False

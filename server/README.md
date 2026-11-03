@@ -35,11 +35,9 @@ In the Cloudflare dashboard, go to **Workers & Pages → lcclips → Settings �
 
 ## Auto-deleting old clips
 
-`setup.bat` adds an R2 lifecycle rule that deletes shared clips **30 days** after upload, which helps you stay within the free 10 GB.
-The rule also cleans up any upload that failed partway through. LCClips stops showing a link as shared once it's older than 30 days.
-
-To keep clips for a different number of days, run `.\setup.ps1 -ExpireDays 60`. Use `-ExpireDays 0` to keep them forever.
-Your local clips on your PC are never affected.
+LCClips handles this itself, so nothing needs setting up on Cloudflare. Shared clips are deleted from your server **30 days** after you share them.
+You can change the number of days in **Settings → Share links**; 0 keeps them forever. The clips saved on your PC are never touched.
+LCClips runs the cleanup when it starts and then every hour while it's running in the tray.
 
 ## How it works
 

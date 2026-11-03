@@ -1,8 +1,7 @@
 # LCClips share server: one-shot setup / redeploy.
 #   .\setup.ps1            first-time setup (login, bucket, secret, deploy, configure app)
 #   .\setup.ps1 -NewToken  also rotate the upload key
-#   .\setup.ps1 -ExpireDays 60   change how long shared clips are kept (0 = forever)
-param([switch]$NewToken, [int]$ExpireDays = 30)
+param([switch]$NewToken)
 $ErrorActionPreference = "Continue"  # native tools write warnings to stderr; we check $LASTEXITCODE
 Set-Location $PSScriptRoot
 
@@ -28,14 +27,6 @@ if ($LASTEXITCODE) {
     Fail ("R2 isn't enabled on your account yet. Open https://dash.cloudflare.com/?to=/:account/r2 ,`n" +
           "click 'Enable R2' (free tier; Cloudflare asks for a card but won't charge under 10 GB), then re-run this script.")
   } else { Write-Host $out; Fail "Could not create bucket." }
-}
-
-Step "Auto-delete: shared clips are removed after $ExpireDays days (0 = keep forever)"
-# Replace any previous LCClips rule so re-running with a new -ExpireDays just works.
-& $wr r2 bucket lifecycle remove lcclips --name lcclips-expire 2>&1 | Out-Null
-if ($ExpireDays -gt 0) {
-  $out = & $wr r2 bucket lifecycle add lcclips lcclips-expire --expire-days $ExpireDays --abort-multipart-days 1 --force 2>&1 | Out-String
-  if ($LASTEXITCODE) { Write-Host $out; Write-Host "Couldn't add the auto-delete rule (clips will be kept). You can add it in the dashboard: R2 > lcclips > Settings > Object lifecycle rules." -ForegroundColor Yellow }
 }
 
 $appCfgPath = Join-Path $env:APPDATA "LCClips\config.json"
@@ -65,7 +56,6 @@ if ($url) {
   New-Item -ItemType Directory -Force (Split-Path $appCfgPath) | Out-Null
   $cfg | Add-Member -NotePropertyName share_server_url -NotePropertyValue $url -Force
   $cfg | Add-Member -NotePropertyName share_token -NotePropertyValue $token -Force
-  $cfg | Add-Member -NotePropertyName share_expire_days -NotePropertyValue $ExpireDays -Force
   [IO.File]::WriteAllText($appCfgPath, ($cfg | ConvertTo-Json))  # UTF-8 without BOM
 }
 

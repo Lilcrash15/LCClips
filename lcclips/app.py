@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, audio, capture, ffmpeg_setup, library, share, winapp
+from . import __version__, audio, capture, ffmpeg_setup, library, share, updater, winapp
 from .config import APP_DIR, APP_NAME, DEVICE_DEFAULT, DEVICE_NONE, ENCODERS, RESOLUTIONS, Config
 from .gui import theme
 from .gui.icon import make_icon
@@ -101,6 +101,11 @@ class App:
         self.root.after(2000, self._watchdog)
         self.root.after(60_000, self._tick_minute)
         self.refresh_clips()
+        self._update_info: updater.UpdateInfo | None = None
+        self.root.after(3000, self._auto_update_check)
+        self.root.after(5000, self._expire_shares)
+        if "--updated" in sys.argv:
+            self.root.after(800, lambda: self.set_status(f"✔ Updated to v{__version__}", "ok"))
 
         if not self.ffmpeg:
             self.set_status("FFmpeg not found. Click Download next to FFmpeg path in Settings.", "error")
@@ -152,6 +157,7 @@ class App:
         self.file_menu.add_command(label="Close LCClips", command=self.quit)
         ttk.Menubutton(bar, text="File", menu=self.file_menu, style="Toolbar.TMenubutton").pack(side="left", padx=(4, 0), pady=2)
         self.help_menu = tk.Menu(self.root, tearoff=0, **theme.popup_menu_kwargs())
+        self.help_menu.add_command(label="Check for updates", command=lambda: self.check_for_updates(manual=True))
         self.help_menu.add_command(label="About", command=self._show_about)
         self.help_menu.add_command(label="Set up share links…", command=self._open_server_folder)
         self.help_menu.add_command(label="Open logs folder", command=lambda: capture.open_folder(str(APP_DIR)))
@@ -185,6 +191,9 @@ class App:
         ttk.Button(top, text="Save clip", style="Accent.TButton", command=self.save_clip).pack(side="right")
         self.hotkey_hint = ttk.Label(top, text="", style="Muted.TLabel")
         self.hotkey_hint.pack(side="right", padx=10)
+        self.update_label = ttk.Label(top, text="", style="UpdateAvailable.TLabel", cursor="hand2")
+        self.update_label.pack(side="right", padx=10)
+        self.update_label.bind("<Button-1>", lambda e: self.show_update_dialog())
 
         self.border = tk.Frame(self.root, bg=theme.ACCENT)
         self.border.pack(fill="both", expand=True, padx=6, pady=(0, 6))
@@ -444,6 +453,148 @@ class App:
         if not up:
             self.b_copy.state(["disabled"])
 
+    # ------------------------------------------------------------------ shared-clip auto-delete
+    def _expire_shares(self) -> None:
+        cfg = self.cfg
+
+        def worker():
+            try:
+                deleted, _failed = share.expire_old_uploads(cfg.share_server_url, cfg.share_token, cfg.share_expire_days)
+                if deleted:
+                    self.ui_q.put(lambda: (self.set_status(
+                        f"Removed {deleted} shared clip(s) older than {cfg.share_expire_days} days from your share server."),
+                        self.refresh_clips()))
+            except Exception:
+                log.exception("Auto-delete failed")
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(3_600_000, self._expire_shares)  # hourly while running
+
+    # ------------------------------------------------------------------ updates
+    def _auto_update_check(self) -> None:
+        if self.cfg.check_updates:
+            self.check_for_updates(manual=False)
+        self.root.after(6 * 3_600_000, self._auto_update_check)  # every 6 h while in the tray
+
+    def check_for_updates(self, manual: bool) -> None:
+        if manual:
+            self.set_status("Checking for updates…")
+
+        def worker():
+            try:
+                info = updater.check()
+            except updater.UpdateError as e:
+                err = str(e)
+                if manual:
+                    self.ui_q.put(lambda: self.set_status(f"Update check failed: {err}", "error"))
+                return
+
+            def done():
+                self._update_info = info
+                if info:
+                    self.update_label.configure(text=f"⬆ Update available: {info.version}")
+                    if manual:
+                        self.show_update_dialog()
+                    else:
+                        self._notify(f"LCClips {info.version} is available. Open LCClips to update.", "Update available")
+                else:
+                    self.update_label.configure(text="")
+                    if manual:
+                        self.set_status(f"✔ You're up to date (v{__version__}).", "ok")
+            self.ui_q.put(done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_update_dialog(self) -> None:
+        info = self._update_info
+        if not info:
+            return
+        self.show()
+        win = tk.Toplevel(self.root)
+        win.title("Update LCClips")
+        win.configure(bg=theme.BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        self._apply_titlebar(win)
+        f = ttk.Frame(win, padding=18)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text=f"LCClips {info.version} is available", style="Heading.TLabel").pack(anchor="w")
+        ttk.Label(f, text=f"You have v{__version__}  ·  download {info.size / 1e6:.0f} MB",
+                  style="Muted.TLabel").pack(anchor="w", pady=(2, 10))
+        notes = tk.Text(f, width=70, height=14, wrap="word", relief="flat", bg=theme.PANEL_BG, fg=theme.FG,
+                        highlightthickness=1, highlightbackground=theme.ACCENT_DIM, padx=10, pady=8,
+                        font=(theme.FONT, 9))
+        self._render_notes(notes, info.notes or "No release notes.")
+        notes.configure(state="disabled")
+        notes.pack(fill="both")
+        bar = ttk.Progressbar(f, mode="determinate", maximum=1.0)
+        msg = ttk.Label(f, text="", style="Muted.TLabel")
+        msg.pack(anchor="w", pady=(10, 0))
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", pady=(10, 0))
+        go = ttk.Button(btns, text="Update now", style="Accent.TButton")
+        go.pack(side="left")
+        ttk.Button(btns, text="View on GitHub", command=lambda: webbrowser.open(info.page_url)).pack(side="left", padx=6)
+        later = ttk.Button(btns, text="Later", command=win.destroy)
+        later.pack(side="right")
+
+        if not updater.can_self_update():
+            go.state(["disabled"])
+            msg.configure(text="You're running LCClips from source - update with git pull instead.")
+
+        def start():
+            go.state(["disabled"])
+            later.state(["disabled"])
+            bar.pack(fill="x", pady=(10, 0), before=btns)
+            msg.configure(text="Downloading…", style="Muted.TLabel")
+
+            def progress(frac: float):
+                self.ui_q.put(lambda: (bar.configure(value=frac), msg.configure(text=f"Downloading… {frac:.0%}")))
+
+            def worker():
+                try:
+                    path = updater.download(info, progress)
+                except updater.UpdateError as e:
+                    err = str(e)
+
+                    def failed():
+                        msg.configure(text=err, style="Error.TLabel")
+                        go.state(["!disabled"])
+                        later.state(["!disabled"])
+                    self.ui_q.put(failed)
+                    return
+
+                def install():
+                    msg.configure(text="Installing - LCClips will close and reopen in a few seconds…")
+                    try:
+                        updater.launch_installer(path)
+                    except OSError as e:
+                        msg.configure(text=f"Couldn't start the installer: {e}", style="Error.TLabel")
+                        return
+                    self.root.after(500, self.quit)
+                self.ui_q.put(install)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        go.configure(command=start)
+
+    @staticmethod
+    def _render_notes(widget: tk.Text, md: str) -> None:
+        """Just enough Markdown for release notes: headings, bullets, **bold**, `code`."""
+        import re
+
+        widget.tag_configure("h", foreground=theme.ACCENT, font=(theme.FONT, 10, "bold"), spacing1=6, spacing3=2)
+        widget.tag_configure("b", font=(theme.FONT, 9, "bold"))
+        for line in md.replace("\r", "").splitlines():
+            m = re.match(r"^\s*#{1,6}\s*(.*)", line)
+            if m:
+                widget.insert("end", m.group(1) + "\n", "h")
+                continue
+            line = re.sub(r"^(\s*)[-*]\s+", r"\1•  ", line)
+            for i, part in enumerate(re.split(r"\*\*(.+?)\*\*", line)):
+                widget.insert("end", part.replace("`", ""), "b" if i % 2 else ())
+            widget.insert("end", "\n")
+
     def _tick_minute(self) -> None:
         self._build_recent()  # keeps "x min ago" fresh
         self.root.after(60_000, self._tick_minute)
@@ -591,6 +742,7 @@ class App:
         self.dl_btn.pack(side="left", padx=(4, 0))
         add(files, "FFmpeg path (optional)", ttk.Entry(files, textvariable=var("ffmpeg_path")), ff_btns)
         add(files, "Close button hides to tray", ttk.Checkbutton(files, variable=var("close_to_tray", tk.BooleanVar)))
+        add(files, "Check for updates automatically", ttk.Checkbutton(files, variable=var("check_updates", tk.BooleanVar)))
         self.startup_var = tk.BooleanVar(value=winapp.startup_enabled())
         if winapp.IS_WINDOWS:
             add(files, "Start with Windows (in tray)", ttk.Checkbutton(files, variable=self.startup_var))
@@ -612,6 +764,12 @@ class App:
         add(sh, "Auto-upload new clips", ttk.Checkbutton(sh, variable=var("auto_upload", tk.BooleanVar)))
         add(sh, "Upload bitrate (0 = original)", ttk.Spinbox(sh, from_=0, to=50, increment=1,
                                                              textvariable=var("upload_bitrate_mbps", tk.IntVar), width=8))
+        add(sh, "Delete shared clips after (days)", ttk.Spinbox(sh, from_=0, to=365, increment=1,
+                                                                textvariable=var("share_expire_days", tk.IntVar), width=8))
+        ttk.Label(sh, text="Removes them from your share server to stay under the free 10 GB. 0 = keep forever. "
+                           "Clips on your PC are never deleted.", style="Muted.TLabel", wraplength=420,
+                  justify="left").grid(row=sh._row, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        sh._row += 1
 
         bar = ttk.Frame(outer)
         bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))

@@ -25,6 +25,8 @@ FFmpeg runs at *below-normal* process priority so the game always wins.
 
 Windows SmartScreen may say "Windows protected your PC", because the installer isn't code-signed. Click **More info → Run anyway**.
 
+**Updates:** LCClips checks GitHub for new releases when it starts and every few hours. When one is available, a **⬆ Update available** link appears in the top bar. Click it, then **Update now**: LCClips downloads the new installer, checks it isn't corrupted, installs it and reopens. You can also use **Help → Check for updates**, and turn off automatic checks in Settings.
+
 To uninstall, go to **Settings → Apps → LCClips → Uninstall**. Your clips and settings (`%APPDATA%\LCClips`) are kept.
 
 ### Running from source (developers)
@@ -70,6 +72,7 @@ It uses your own free Cloudflare server. To set it up, follow **[server/README.m
 
 - **Share last clip** (in the app or the tray icon): uploads the most recent clip and copies the link.
 - **Auto-upload new clips**: every hotkey clip gets a link automatically.
+- **Auto-delete**: shared clips are removed from your share server after 30 days. Change the number of days in Settings (0 = keep forever). Clips on your PC are never deleted.
 - **Upload bitrate**: before uploading, LCClips makes a smaller copy on the GPU (8 Mbps by default), so uploads are about 2–3× faster. The full-quality original stays on your PC. Set it to 0 to upload the original.
 - Copy a clip's link again, or remove it from the server, from the **Selected clip** panel.
 

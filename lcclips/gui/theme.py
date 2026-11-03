@@ -100,6 +100,9 @@ def apply_theme(root: tk.Tk, colors: dict[str, str]) -> ttk.Style:
     style.configure("TLabel", background=BG, foreground=FG)
     style.configure("Muted.TLabel", background=BG, foreground=MUTED_FG)
     style.configure("Success.TLabel", background=BG, foreground=SUCCESS, font=(FONT, 9, "bold"))
+    style.configure("UpdateAvailable.TLabel", background=BG, foreground=ACCENT, font=(FONT, 9, "bold", "underline"))
+    style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=FIELD_BG, bordercolor=ACCENT_DIM,
+                    lightcolor=ACCENT, darkcolor=ACCENT)
     style.configure("Error.TLabel", background=BG, foreground=REC_RED)
     style.configure("Heading.TLabel", background=BG, foreground=ACCENT, font=(FONT, 10, "bold"))
     style.configure("Rec.TLabel", background=BG, foreground=REC_RED, font=(FONT, 9, "bold"))

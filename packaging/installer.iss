@@ -55,6 +55,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\LCClips.exe"; Description: "Launch LCClips now"; Flags: nowait postinstall skipifsilent
+; In-app updates run the installer with /SILENT - reopen LCClips afterwards.
+Filename: "{app}\LCClips.exe"; Parameters: "--updated"; Flags: nowait skipifnotsilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM LCClips.exe /F"; Flags: runhidden; RunOnceId: "StopLCClips"

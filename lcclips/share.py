@@ -175,12 +175,31 @@ def is_expired(item: Upload, expire_days: int) -> bool:
 
 
 def active_uploads(expire_days: int) -> list[Upload]:
-    """Upload history minus links the server's auto-delete rule has already removed."""
-    items = load_history()
-    live = [u for u in items if not is_expired(u, expire_days)]
-    if len(live) != len(items):
-        _save_history(live)
-    return live
+    """Upload history minus links that are past their auto-delete age."""
+    return [u for u in load_history() if not is_expired(u, expire_days)]
+
+
+def expire_old_uploads(server_url: str, token: str, expire_days: int) -> tuple[int, int]:
+    """Deletes shared clips older than `expire_days` from the share server, then
+    drops them from the history. Returns (deleted, failed). Failures (offline,
+    server down) stay in the history and are retried next time."""
+    if expire_days <= 0 or not server_url or not token:
+        return 0, 0
+    old = [u for u in load_history() if is_expired(u, expire_days)]
+    if not old:
+        return 0, 0
+    client = ShareClient(server_url, token)
+    gone: set[str] = set()
+    for u in old:
+        try:
+            client.delete(u.id)  # deleting an already-missing clip is fine
+            gone.add(u.id)
+        except ShareError as e:
+            log.warning("Auto-delete of %s failed: %s", u.url, e)
+    if gone:
+        _save_history([u for u in load_history() if u.id not in gone])
+        log.info("Auto-deleted %d shared clip(s) older than %d days", len(gone), expire_days)
+    return len(gone), len(old) - len(gone)
 
 
 def find_upload(file: Path, expire_days: int = 0) -> Upload | None:
