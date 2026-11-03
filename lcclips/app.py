@@ -3,6 +3,7 @@ status row, accent-bordered notebook with Clips / Settings / Themes tabs."""
 from __future__ import annotations
 
 import ctypes
+import os
 import logging
 import queue
 import shutil
@@ -1300,3 +1301,7 @@ def main() -> None:
     winapp.listen_for_show(lambda: app.ui_q.put(app.show))
     winapp.listen_for_save(app.save_clip)  # LCClips.exe --save-clip
     app.run()
+    # Make sure nothing (tray thread, hotkey hook, editor server) keeps a
+    # background process alive - it would keep holding the hotkey.
+    logging.shutdown()
+    os._exit(0)
