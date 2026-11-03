@@ -6,9 +6,11 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import webbrowser
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import audio, capture
+from . import audio, capture, share
 from .config import APP_DIR, APP_NAME, DEVICE_DEFAULT, DEVICE_NONE, ENCODERS, RESOLUTIONS, Config
 
 log = logging.getLogger(APP_NAME)
@@ -32,6 +34,8 @@ class App:
         self.ui_q: queue.Queue = queue.Queue()
         self._hotkey_handle = None
         self._busy = False
+        self._sharing = False
+        self.last_clip: Path | None = None
         self.tray = None
 
         self.root = tk.Tk()
@@ -96,11 +100,25 @@ class App:
         add("FFmpeg path (optional)", ttk.Entry(f, textvariable=var("ffmpeg_path"), width=34),
             ttk.Button(f, text="Browse…", command=self._browse_ffmpeg))
 
+        ttk.Separator(f).grid(row=row, column=0, columnspan=3, sticky="ew", pady=8); row += 1
+        ttk.Label(f, text="Share links", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky="w"); row += 1
+        add("Server URL", ttk.Entry(f, textvariable=var("share_server_url"), width=34),
+            ttk.Button(f, text="Test", command=self.test_share))
+        add("Upload key", ttk.Entry(f, textvariable=var("share_token"), width=34, show="•"))
+        add("Auto-upload new clips", ttk.Checkbutton(f, variable=var("auto_upload", tk.BooleanVar)))
+        add("Upload bitrate (Mbps, 0 = original)",
+            ttk.Spinbox(f, from_=0, to=50, increment=1, textvariable=var("upload_bitrate_mbps", tk.IntVar), width=8))
+
         btns = ttk.Frame(f)
         btns.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(12, 4)); row += 1
         ttk.Button(btns, text="Apply & restart capture", command=self.apply).pack(side="left")
         ttk.Button(btns, text="Save clip now", command=self.save_clip).pack(side="left", padx=6)
         ttk.Button(btns, text="Open clips folder", command=lambda: capture.open_folder(self.cfg.output_dir)).pack(side="left")
+        btns2 = ttk.Frame(f)
+        btns2.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(0, 4)); row += 1
+        ttk.Button(btns2, text="Share last clip", command=self.share_last).pack(side="left")
+        ttk.Button(btns2, text="Share a file…", command=self.share_pick).pack(side="left", padx=6)
+        ttk.Button(btns2, text="My uploads…", command=self.open_uploads).pack(side="left")
 
         self.status = tk.StringVar(value="Starting…")
         self.status_lbl = ttk.Label(f, textvariable=self.status, wraplength=520, justify="left")
@@ -117,6 +135,25 @@ class App:
         self.mon_combo["values"] = labels
         sel = next((l for l in labels if l.startswith(f"{self.cfg.monitor}:")), labels[0])
         self.mon_combo.set(sel)
+
+    def detect_monitors(self) -> None:
+        if not self.ffmpeg:
+            self.set_status("FFmpeg not found - can't detect monitors.", error=True)
+            return
+        self.set_status("Detecting monitors…")
+        ffmpeg = self.ffmpeg
+
+        def worker():
+            mons = capture.detect_monitors(ffmpeg)
+
+            def done():
+                self.monitors = mons
+                self._fill_monitor_combo()
+                self.set_status(f"Found {len(mons)} monitor(s)." if mons else
+                                "No monitors found by Desktop Duplication (check ffmpeg.log).", error=not mons)
+            self.ui_q.put(done)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def refresh_devices(self) -> None:
         self.out_combo["values"] = [DEVICE_DEFAULT, DEVICE_NONE, *audio.list_output_devices()]
@@ -235,8 +272,11 @@ class App:
         def worker():
             try:
                 out = rec.save_clip()
+                self.last_clip = out
                 _beep(True)
                 self.ui_q.put(lambda: self.set_status(f"✔ Saved {out.name}"))
+                if self.cfg.auto_upload and self.cfg.share_server_url:
+                    self.ui_q.put(lambda: self.share_file(out))
                 if self.tray:
                     try:
                         self.tray.notify(out.name, "Clip saved")
@@ -248,6 +288,124 @@ class App:
                 self.ui_q.put(lambda: self.set_status(f"Save failed: {err}", error=True))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ------------------------------------------------------------------ share links
+    def _copy(self, text: str) -> None:
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
+
+    def _notify(self, msg: str, title: str) -> None:
+        if self.tray:
+            try:
+                self.tray.notify(msg, title)
+            except Exception:
+                pass
+
+    def share_last(self) -> None:
+        if self.last_clip and self.last_clip.exists():
+            self.share_file(self.last_clip)
+        else:
+            self.share_pick()
+
+    def share_pick(self) -> None:
+        p = filedialog.askopenfilename(initialdir=self.cfg.output_dir, filetypes=[("Video", "*.mp4"), ("All", "*.*")])
+        if p:
+            self.share_file(Path(p))
+
+    def share_file(self, clip: Path) -> None:
+        if self._sharing:
+            self.set_status("An upload is already running…")
+            return
+        cfg = self._collect()
+        if not cfg.share_server_url or not cfg.share_token:
+            self.set_status("Set the share server URL and upload key first (run server\\setup.bat).", error=True)
+            return
+        self._sharing = True
+        encoder = self.recorder.plan.encoder if self.recorder else "h264_nvenc"
+
+        def progress(stage: str, frac: float):
+            self.ui_q.put(lambda: self.set_status(f"⇪ {stage} {clip.name}… {frac:.0%}"))
+
+        def worker():
+            try:
+                item = share.share_clip(self.ffmpeg, cfg.share_server_url, cfg.share_token, clip,
+                                        encoder=encoder, upload_mbps=cfg.upload_bitrate_mbps, progress=progress)
+
+                def done():
+                    self._copy(item.url)
+                    self.set_status(f"🔗 Link copied: {item.url}")
+                self.ui_q.put(done)
+                _beep(True)
+                self._notify(item.url, "Clip link copied")
+            except Exception as e:
+                log.exception("Share failed")
+                _beep(False)
+                err = str(e)
+                self.ui_q.put(lambda: self.set_status(f"Upload failed: {err}", error=True))
+            finally:
+                self._sharing = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def test_share(self) -> None:
+        cfg = self._collect()
+
+        def worker():
+            try:
+                share.ShareClient(cfg.share_server_url, cfg.share_token).ping()
+                self.ui_q.put(lambda: self.set_status("✔ Share server reachable and upload key accepted."))
+            except Exception as e:
+                err = str(e)
+                self.ui_q.put(lambda: self.set_status(f"Share test failed: {err}", error=True))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def open_uploads(self) -> None:
+        win = tk.Toplevel(self.root)
+        win.title("My uploads")
+        win.geometry("620x320")
+        lb = tk.Listbox(win, activestyle="none")
+        lb.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        items: list[share.Upload] = []
+
+        def reload():
+            items[:] = share.load_history()
+            lb.delete(0, "end")
+            for u in items:
+                lb.insert("end", f"{u.created.replace('T', ' ')}   {u.title}   {u.url}")
+
+        def sel() -> share.Upload | None:
+            i = lb.curselection()
+            return items[i[0]] if i else None
+
+        def copy():
+            if (u := sel()):
+                self._copy(u.url)
+                self.set_status(f"🔗 Link copied: {u.url}")
+
+        def open_():
+            if (u := sel()):
+                webbrowser.open(u.url)
+
+        def delete():
+            u = sel()
+            if not u or not messagebox.askyesno("Delete clip", f"Delete '{u.title}' from the share server?\nThe link will stop working.", parent=win):
+                return
+            cfg = self._collect()
+            try:
+                share.delete_upload(share.ShareClient(cfg.share_server_url, cfg.share_token), u)
+            except Exception as e:
+                messagebox.showerror("Delete failed", str(e), parent=win)
+            reload()
+
+        bar = ttk.Frame(win)
+        bar.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(bar, text="Copy link", command=copy).pack(side="left")
+        ttk.Button(bar, text="Open", command=open_).pack(side="left", padx=6)
+        ttk.Button(bar, text="Delete from server", command=delete).pack(side="left")
+        lb.bind("<Double-Button-1>", lambda _e: open_())
+        reload()
 
     # ------------------------------------------------------------------ loops
     def _pump(self) -> None:
@@ -283,6 +441,7 @@ class App:
         menu = pystray.Menu(
             pystray.MenuItem("Settings", lambda: self.ui_q.put(self.show), default=True),
             pystray.MenuItem("Save clip", lambda: self.save_clip()),
+            pystray.MenuItem("Share last clip", lambda: self.ui_q.put(self.share_last)),
             pystray.MenuItem("Open clips folder", lambda: capture.open_folder(self.cfg.output_dir)),
             pystray.MenuItem("Quit", lambda: self.ui_q.put(self.quit)),
         )

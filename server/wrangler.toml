@@ -1,0 +1,16 @@
+name = "lcclips"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# Free workers.dev URL. Set to false if you attach a custom domain instead.
+workers_dev = true
+
+[[r2_buckets]]
+binding = "CLIPS"
+bucket_name = "lcclips"
+
+[vars]
+SITE_NAME = "LCClips"
+
+# The upload key is a secret, not a var. setup.ps1 sets it for you:
+#   npx wrangler secret put UPLOAD_TOKEN

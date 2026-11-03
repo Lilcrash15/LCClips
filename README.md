@@ -40,6 +40,18 @@ Settings are saved to `%APPDATA%\LCClips\config.json`. Logs are in the same fold
 - **Microphone**: any input device, or *None*.
 - **Volumes and audio sync offset**: fine-tune the mix and alignment.
 
+## Share links (like Medal)
+
+LCClips can upload a clip and copy a short link to your clipboard. Discord and X play the video inline from that link.
+It uses your own free Cloudflare server. To set it up, follow **[server/README.md](server/README.md)**: you enable R2 once, then run `server\setup.bat`.
+
+- **Share last clip** (in the app or the tray icon): uploads the most recent clip and copies the link.
+- **Auto-upload new clips**: every hotkey clip gets a link automatically.
+- **Upload bitrate**: before uploading, LCClips makes a smaller copy on the GPU (8 Mbps by default), so uploads are about 2–3× faster. The full-quality original stays on your PC. Set it to 0 to upload the original.
+- **My uploads…**: copy, open or delete links you've shared.
+
+## Tray and startup
+
 Closing the window keeps LCClips running in the system tray. Start it hidden with `run.bat --minimized`. To launch it at login, put a shortcut to that command in `shell:startup`.
 
 ## Standalone .exe
@@ -61,10 +73,13 @@ lcclips/config.py   settings dataclass and JSON persistence
 lcclips/audio.py    loopback + mic capture threads, mixer clocked to real time
 lcclips/capture.py  FFmpeg command builder, GPU encoder probing, segment ring, clip saving
 lcclips/app.py      tkinter settings UI, global hotkey, tray icon
+lcclips/share.py    upload client (stdlib only), thumbnails, upload history
+server/             Cloudflare Worker + R2 share server, one-click setup
 ```
 
 ## Ideas for next steps
 
+- Share hotkey and clip trimming before upload.
 - Per-application audio (game only, without Discord or music) using the Windows process-loopback API.
 - Separate audio tracks for game and mic.
 - HEVC/AV1 output and a trim/preview window.

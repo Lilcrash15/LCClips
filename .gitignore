@@ -5,3 +5,6 @@ build/
 dist/
 *.spec
 bin/
+node_modules/
+.wrangler/
+.dev.vars

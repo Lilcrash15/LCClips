@@ -38,12 +38,17 @@ class Config:
     audio_offset_ms: int = 0  # +delays audio, -advances it
     output_dir: str = field(default_factory=_default_clips_dir)
     ffmpeg_path: str = ""  # empty = auto-detect
+    # Share links (see server/README.md)
+    share_server_url: str = ""
+    share_token: str = ""
+    auto_upload: bool = False
+    upload_bitrate_mbps: int = 8  # re-encode for upload; 0 = upload the original file
 
     @classmethod
     def load(cls) -> "Config":
         cfg = cls()
         try:
-            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
             known = {f.name: f.type for f in fields(cls)}
             for k, v in data.items():
                 if k in known:
