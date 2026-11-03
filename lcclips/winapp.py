@@ -170,7 +170,7 @@ def _toast_test() -> str:
             from PIL import ImageGrab
 
             x, y = ov._xy("Top right")
-            px = ImageGrab.grab(bbox=(x + 150, y + 30, x + 151, y + 31)).getpixel((0, 0))
+            px = ImageGrab.grab(bbox=(x + 150, y + 30, x + 151, y + 31), include_layered_windows=True).getpixel((0, 0))
             return sum(px[:3]) / 3
 
         ov.show("Clip saved", "Self-test", "ok", "Top right", ms=1500)
