@@ -298,7 +298,7 @@ class App:
     def refresh_clips(self) -> None:
         self._refresh_pending = False
         self.clips = self.library.scan(self.cfg.output_dir)
-        self._uploads = {u.file: u for u in share.load_history()}
+        self._uploads = {u.file: u for u in share.active_uploads(self.cfg.share_expire_days)}
         if self.selected and not any(c.key == self.selected for c in self.clips):
             self.selected = None
         self._build_recent()
@@ -917,7 +917,8 @@ class App:
         def worker():
             try:
                 item = share.share_clip(self.ffmpeg, cfg.share_server_url, cfg.share_token, clip,
-                                        encoder=encoder, upload_mbps=cfg.upload_bitrate_mbps, progress=progress)
+                                        encoder=encoder, upload_mbps=cfg.upload_bitrate_mbps, progress=progress,
+                                        expire_days=cfg.share_expire_days)
 
                 def done():
                     self._sharing.discard(key)

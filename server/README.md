@@ -33,13 +33,13 @@ If your key leaks, run `setup.bat -NewToken`. That creates a new key; the old on
 
 In the Cloudflare dashboard, go to **Workers & Pages → lcclips → Settings → Domains & Routes → Add → Custom domain**, for example `clips.yourname.com`. Then put that URL in LCClips under *Share links → Server URL*.
 
-## Auto-deleting old clips (optional)
+## Auto-deleting old clips
 
-To stay within the free 10 GB, you can have clips deleted after 90 days:
+`setup.bat` adds an R2 lifecycle rule that deletes shared clips **30 days** after upload, which helps you stay within the free 10 GB.
+The rule also cleans up any upload that failed partway through. LCClips stops showing a link as shared once it's older than 30 days.
 
-```bash
-npx wrangler r2 bucket lifecycle add lcclips expire-old --expire-days 90
-```
+To keep clips for a different number of days, run `.\setup.ps1 -ExpireDays 60`. Use `-ExpireDays 0` to keep them forever.
+Your local clips on your PC are never affected.
 
 ## How it works
 

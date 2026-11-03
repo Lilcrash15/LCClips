@@ -165,8 +165,26 @@ def _save_history(items: list[Upload]) -> None:
     HISTORY_PATH.write_text(json.dumps([asdict(u) for u in items], indent=2), encoding="utf-8")
 
 
-def find_upload(file: Path) -> Upload | None:
-    return next((u for u in load_history() if Path(u.file) == file), None)
+def is_expired(item: Upload, expire_days: int) -> bool:
+    if expire_days <= 0:
+        return False
+    try:
+        return (datetime.now() - datetime.fromisoformat(item.created)).days >= expire_days
+    except ValueError:
+        return False
+
+
+def active_uploads(expire_days: int) -> list[Upload]:
+    """Upload history minus links the server's auto-delete rule has already removed."""
+    items = load_history()
+    live = [u for u in items if not is_expired(u, expire_days)]
+    if len(live) != len(items):
+        _save_history(live)
+    return live
+
+
+def find_upload(file: Path, expire_days: int = 0) -> Upload | None:
+    return next((u for u in active_uploads(expire_days) if Path(u.file) == file), None)
 
 
 def delete_upload(client: ShareClient, item: Upload) -> None:
@@ -182,9 +200,9 @@ def title_from_filename(path: Path) -> str:
 
 
 def share_clip(ffmpeg: str, server_url: str, token: str, clip: Path, encoder: str = "h264_nvenc",
-               upload_mbps: int = 8, progress: Progress | None = None) -> Upload:
-    """Upload `clip` (or return the existing link if it was uploaded before)."""
-    existing = find_upload(clip)
+               upload_mbps: int = 8, progress: Progress | None = None, expire_days: int = 0) -> Upload:
+    """Upload `clip` (or return the existing link if it was uploaded before and hasn't expired)."""
+    existing = find_upload(clip, expire_days)
     if existing:
         return existing
     client = ShareClient(server_url, token)
