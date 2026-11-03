@@ -124,6 +124,60 @@ def set_startup(enabled: bool) -> None:
 
 # --------------------------------------------------------------------------- self-test (CI)
 
+def _toast_test() -> str:
+    """Opens a maximized, borderless, always-on-top, focused 'game' window in another
+    process (like a borderless-windowed game), shows the clip toast and checks
+    with the real window z-order that the toast is above it."""
+    import time
+    import tkinter as tk
+
+    from .gui.overlay import Overlay
+
+    user32 = ctypes.windll.user32
+    ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+          "$f=New-Object Windows.Forms.Form;$f.Text='LCClipsFakeGame';$f.FormBorderStyle='None';"
+          "$f.WindowState='Maximized';$f.TopMost=$true;$f.BackColor='Black';"
+          "$f.Add_Shown({$f.Activate()});[void]$f.ShowDialog()")
+    game_proc = subprocess.Popen(["powershell", "-NoProfile", "-Command", ps], creationflags=0x08000000)
+    try:
+        user32.FindWindowW.restype = ctypes.c_void_p
+        game = None
+        for _ in range(100):
+            game = user32.FindWindowW(None, "LCClipsFakeGame")
+            if game:
+                break
+            time.sleep(0.1)
+        if not game:
+            raise RuntimeError("fake game window didn't open")
+        time.sleep(0.5)
+        root = tk.Tk()
+        root.withdraw()  # like LCClips hidden in the tray
+        ov = Overlay(root)
+        ov.show("Clip saved", "Self-test", "ok", "Top right", ms=0)
+        for _ in range(30):
+            root.update()
+            time.sleep(0.02)
+        visible = user32.IsWindowVisible(ctypes.c_void_p(ov.hwnd))
+        user32.GetWindow.restype = ctypes.c_void_p
+        h, above = ov.hwnd, False
+        for _ in range(2000):  # walk down the z-order from the toast
+            h = user32.GetWindow(ctypes.c_void_p(h), 2)  # GW_HWNDNEXT
+            if not h:
+                break
+            if h == game:
+                above = True
+                break
+        fg = user32.GetForegroundWindow()
+        root.destroy()
+        if not visible:
+            raise RuntimeError("toast window not visible")
+        if not above:
+            raise RuntimeError("toast is BELOW the game window")
+        return f"visible, above the game window; game kept focus: {fg == game}"
+    finally:
+        game_proc.kill()
+
+
 def _hotkey_test() -> str:
     """Injects key presses the way Stream Deck does (virtual-key codes, no scan
     code) and checks LCClips receives them - both when it owns the hotkey and
@@ -347,6 +401,7 @@ def selftest(report: Path) -> int:
     check("LC Editor", lambda: _editor_test(ff))
     if IS_WINDOWS:
         check("hotkey (injected, like Stream Deck)", _hotkey_test, required=False)
+        check("toast above a borderless always-on-top game", _toast_test, required=False)
     lines.append("RESULT " + ("PASS" if ok else "FAIL"))
     report.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1

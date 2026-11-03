@@ -741,8 +741,37 @@ class App:
 
     # ------------------------------------------------------------------ Settings tab
     def _build_settings_tab(self) -> None:
-        outer = ttk.Frame(self.settings_tab, padding=(14, 12))
-        outer.pack(fill="both", expand=True)
+        # Save bar pinned to the bottom so it's always reachable, however tall the settings get.
+        bar = ttk.Frame(self.settings_tab, padding=(20, 8, 20, 10))
+        bar.pack(side="bottom", fill="x")
+        ttk.Separator(self.settings_tab).pack(side="bottom", fill="x")
+        self.save_btn = ttk.Button(bar, text="Save settings", style="Accent.TButton", command=self.apply)
+        self.save_btn.pack(side="left")
+        self.saved_label = ttk.Label(bar, text="", style="Success.TLabel")
+        self.saved_label.pack(side="left", padx=12)
+        self.dirty_label = ttk.Label(bar, text="", style="Muted.TLabel")
+        self.dirty_label.pack(side="left")
+        # Scrollable settings area (mouse wheel works while the pointer is over it).
+        holder = ttk.Frame(self.settings_tab)
+        holder.pack(fill="both", expand=True)
+        canvas = self.settings_canvas = tk.Canvas(holder, bg=theme.BG, highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        outer = ttk.Frame(canvas, padding=(14, 12, 14, 8))
+        win = canvas.create_window((0, 0), window=outer, anchor="nw")
+        outer.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+
+        def wheel(e):
+            if canvas.yview() != (0.0, 1.0):
+                canvas.yview_scroll(-1 if (e.delta > 0 or getattr(e, "num", 0) == 4) else 1, "units")
+
+        holder.bind("<Enter>", lambda e: (canvas.bind_all("<MouseWheel>", wheel),
+                                          canvas.bind_all("<Button-4>", wheel), canvas.bind_all("<Button-5>", wheel)))
+        holder.bind("<Leave>", lambda e: (canvas.unbind_all("<MouseWheel>"), canvas.unbind_all("<Button-4>"),
+                                          canvas.unbind_all("<Button-5>")))
         outer.columnconfigure(0, weight=1, uniform="col")
         outer.columnconfigure(1, weight=1, uniform="col")
         self.vars: dict[str, tk.Variable] = {}
@@ -834,13 +863,11 @@ class App:
                   justify="left").grid(row=sh._row, column=0, columnspan=3, sticky="w", pady=(2, 0))
         sh._row += 1
 
-        bar = ttk.Frame(outer)
-        bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(10, 0))
-        ttk.Button(bar, text="Save & restart capture", style="Accent.TButton", command=self.apply).pack(side="left")
-        self.saved_label = ttk.Label(bar, text="", style="Success.TLabel")
-        self.saved_label.pack(side="left", padx=12)
-
         self.refresh_devices()
+        for v in self.vars.values():
+            v.trace_add("write", lambda *_: self.root.after_idle(self._update_dirty))
+        self.mon_combo.bind("<<ComboboxSelected>>", lambda e: self._update_dirty(), add="+")
+        self.startup_var.trace_add("write", lambda *_: self._update_dirty())
         self._fill_monitor_combo()
 
     def _flash_saved(self) -> None:
@@ -866,6 +893,7 @@ class App:
         theme.apply_theme(self.root, theme.resolve_colors(name))
         self.border.configure(bg=theme.ACCENT)
         self.inner.configure(bg=theme.BG)
+        self.settings_canvas.configure(bg=theme.BG)
         for m in (self.file_menu, self.help_menu):
             m.configure(**theme.popup_menu_kwargs())
         self._apply_titlebar(self.root)
@@ -1004,9 +1032,39 @@ class App:
         cfg.fps = max(10, min(240, int(cfg.fps)))
         return cfg
 
+    # Settings that need the recorder restarted (which clears the replay buffer).
+    CAPTURE_FIELDS = ("clip_seconds", "monitor", "resolution", "fps", "bitrate_mbps", "encoder", "draw_mouse",
+                      "game_audio_device", "mic_device", "game_volume", "mic_volume", "audio_offset_ms", "ffmpeg_path")
+
+    def _update_dirty(self) -> None:
+        try:
+            new = self._collect()
+        except (tk.TclError, ValueError, TypeError):
+            return
+        changed = [k for k in new.__dict__ if getattr(new, k) != getattr(self.cfg, k)]
+        startup_changed = winapp.IS_WINDOWS and self.startup_var.get() != winapp.startup_enabled()
+        if not changed and not startup_changed:
+            self.dirty_label.configure(text="")
+            self.save_btn.configure(text="Save settings")
+        elif any(k in self.CAPTURE_FIELDS for k in changed):
+            self.dirty_label.configure(text="Unsaved changes · saving restarts capture (clears the replay buffer)")
+            self.save_btn.configure(text="Save & restart capture")
+        else:
+            self.dirty_label.configure(text="Unsaved changes")
+            self.save_btn.configure(text="Save settings")
+
     def apply(self) -> None:
-        self.cfg = self._collect()
+        try:
+            new = self._collect()
+        except (tk.TclError, ValueError, TypeError) as e:
+            self.set_status(f"Check your settings: {e}", "error")
+            return
+        needs_restart = any(getattr(new, k) != getattr(self.cfg, k) for k in self.CAPTURE_FIELDS) \
+            or self.recorder is None
+        self.cfg = new
         self.cfg.save()
+        if self.recorder:
+            self.recorder.cfg.output_dir = self.cfg.output_dir  # takes effect for the next clip
         global SOUNDS_ON
         SOUNDS_ON = self.cfg.sounds
         try:
@@ -1015,12 +1073,20 @@ class App:
         except OSError as e:
             log.warning("Couldn't change Start with Windows: %s", e)
         self._flash_saved()
+        self._update_dirty()
         self.ffmpeg = capture.find_ffmpeg(self.cfg.ffmpeg_path)
         self.refresh_clips()
         if not self.ffmpeg:
             self.set_status("FFmpeg not found.", "error")
             return
-        self.restart()
+        if needs_restart:
+            self.restart()
+        else:
+            # Hotkey / alerts / sharing etc.: apply instantly, keep recording.
+            self.bind_hotkey()
+            self._set_recording(self.recorder is not None and self.recorder.alive())
+            if not self._hotkey_warning:
+                self.set_status(f"Settings saved. Hotkey: {self.cfg.hotkey.upper()}", "ok")
 
     def restart(self) -> None:
         if self._busy:

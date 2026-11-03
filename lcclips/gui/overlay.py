@@ -9,12 +9,14 @@ fullscreen draws over everything, including this)."""
 from __future__ import annotations
 
 import ctypes
+import logging
 import sys
 import tkinter as tk
 
 from . import theme
 
 IS_WINDOWS = sys.platform == "win32"
+log = logging.getLogger(__name__)
 WIDTH, HEIGHT, MARGIN = 300, 64, 24
 POSITIONS = ["Top right", "Top left", "Bottom right", "Bottom left"]
 _OFFSCREEN = (-32000, -32000)
@@ -50,6 +52,10 @@ class Overlay:
                 ex = ctypes.windll.user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
                 ex |= 0x80000 | 0x20 | 0x80 | 0x8000000 | 0x8  # LAYERED|TRANSPARENT|TOOLWINDOW|NOACTIVATE|TOPMOST
                 ctypes.windll.user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex)
+                # No owner window: otherwise hiding LCClips to the tray hides the toast too.
+                set_long = getattr(ctypes.windll.user32, "SetWindowLongPtrW", ctypes.windll.user32.SetWindowLongW)
+                set_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+                set_long(self.hwnd, -8, None)  # GWLP_HWNDPARENT
             except Exception:
                 self.hwnd = 0
         self._set_alpha(0.0)
@@ -64,8 +70,10 @@ class Overlay:
         self.bar.configure(bg=color)
         self.title.configure(text=title, fg=theme.FG)
         self.sub.configure(text=sub, fg=theme.MUTED_FG)
-        self._move(*self._xy(position))
+        x, y = self._xy(position)
+        self._move(x, y, show=True)
         self._fade_to(0.95)
+        log.info("toast '%s' at %d,%d hwnd=%s", title, x, y, self.hwnd)
         if self._hide_job:
             self.root.after_cancel(self._hide_job)
         self._hide_job = self.root.after(ms, self.hide) if ms else None
@@ -81,10 +89,14 @@ class Overlay:
         y = sh - HEIGHT - MARGIN - 40 if "bottom" in position.lower() else MARGIN
         return x, y
 
-    def _move(self, x: int, y: int) -> None:
+    def _move(self, x: int, y: int, show: bool = False) -> None:
         if self.hwnd:
-            HWND_TOPMOST, SWP_NOSIZE, SWP_NOACTIVATE = -1, 0x1, 0x10
-            ctypes.windll.user32.SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
+            u = ctypes.windll.user32
+            HWND_TOPMOST, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW = -1, 0x1, 0x10, 0x40
+            if show:
+                u.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE: visible even if Tk hid it with the main window
+            u.SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, 0, 0,
+                           SWP_NOSIZE | SWP_NOACTIVATE | (SWP_SHOWWINDOW if show else 0))
         else:
             self.win.geometry(f"+{x}+{y}")
             self.win.lift()
