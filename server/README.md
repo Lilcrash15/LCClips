@@ -8,7 +8,8 @@ You need **Node.js LTS** (from nodejs.org) and a free **Cloudflare account**.
 
 1. In the Cloudflare dashboard, go to **R2** and click **Enable R2**.
    Cloudflare asks for a card. You aren't charged under the free tier: 10 GB of storage, and downloads (bandwidth) are always free.
-2. Double-click **`server\setup.bat`**.
+2. In LCClips, choose **Help → Set up share links…** to open the `server` folder, then double-click **`setup.bat`** in it.
+   (If you're running from source, it's the repo's `server\` folder.)
 
 The script does everything else:
 - installs wrangler into this folder (nothing global);

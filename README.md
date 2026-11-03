@@ -16,14 +16,27 @@ It keeps the last *N* seconds of your screen, game audio and mic in a rolling bu
 
 FFmpeg runs at *below-normal* process priority so the game always wins.
 
-## Setup
+## Install
 
-1. Install **Python 3.10+** from python.org.
-2. Double-click `run.bat`. The first run creates a virtual environment and installs the dependencies.
-3. **FFmpeg:** if LCClips can't find it, it offers to download it for you, about 150 MB one time. It saves the static
-   BtbN build (which includes the NVENC, AMF and QSV encoders) to `%APPDATA%\LCClips\bin`. You can also click
-   **Download** next to *FFmpeg path* at any time.
-   To install it by hand instead, use FFmpeg 7.1 or newer (8+ recommended), then either put it on your `PATH` or Browse to `ffmpeg.exe` in the app.
+1. Download **`LCClips-Setup-<version>.exe`** from the [Releases page](https://github.com/Lilcrash15/LCClips/releases).
+2. Run it. It installs just for your user account, with no admin prompt, into `%LOCALAPPDATA%\Programs\LCClips`.
+   It adds a Start Menu shortcut, and optionally a desktop shortcut and Start with Windows.
+3. Open **LCClips** from the Start Menu. FFmpeg is already included.
+
+Windows SmartScreen may say "Windows protected your PC", because the installer isn't code-signed. Click **More info → Run anyway**.
+
+To uninstall, go to **Settings → Apps → LCClips → Uninstall**. Your clips and settings (`%APPDATA%\LCClips`) are kept.
+
+### Running from source (developers)
+
+Install Python 3.10+ and run `run.bat`. If FFmpeg isn't found, LCClips offers to download it.
+
+### Building the installer
+
+Every push to `main` builds the installer on GitHub Actions; download it from the run's *Artifacts*.
+Pushing a tag like `v0.2.0` also publishes it as a Release.
+To build locally on Windows, install Python 3.12 and [Inno Setup 6](https://jrsoftware.org/isdl.php), then run `build.bat`.
+Before building the installer, the build runs a self-test on the packaged app (`LCClips.exe --selftest report.txt`).
 
 Settings are saved to `%APPDATA%\LCClips\config.json`. Logs are in the same folder (`lcclips.log`, `ffmpeg.log`).
 
@@ -67,10 +80,6 @@ To exit, right-click the tray icon and choose **Close LCClips**. You can turn th
 If you don't see the icon, click the **^** arrow on the taskbar. You can drag the icon out of there so it's always visible.
 
 Start LCClips hidden with `run.bat --minimized`. To launch it at login, put a shortcut to that command in `shell:startup`.
-
-## Standalone .exe
-
-Put `ffmpeg.exe` in `bin\`, then run `build.bat`. The output is in `dist\LCClips\`.
 
 ## Troubleshooting
 

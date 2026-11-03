@@ -14,9 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, audio, capture, ffmpeg_setup, library, share
+from . import __version__, audio, capture, ffmpeg_setup, library, share, winapp
 from .config import APP_DIR, APP_NAME, DEVICE_DEFAULT, DEVICE_NONE, ENCODERS, RESOLUTIONS, Config
 from .gui import theme
+from .gui.icon import make_icon
 
 log = logging.getLogger(APP_NAME)
 
@@ -121,15 +122,7 @@ class App:
             pass
 
     def _icon_image(self, size: int = 64):
-        from PIL import Image, ImageDraw
-
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        s = size / 64
-        d.rounded_rectangle((2 * s, 2 * s, 62 * s, 62 * s), radius=14 * s, fill=theme.ACCENT)
-        d.ellipse((18 * s, 18 * s, 46 * s, 46 * s), fill="#141414")
-        d.ellipse((26 * s, 26 * s, 38 * s, 38 * s), fill=theme.REC_RED)
-        return img
+        return make_icon(size, theme.ACCENT)
 
     def _apply_icon(self) -> None:
         try:
@@ -160,9 +153,22 @@ class App:
         ttk.Menubutton(bar, text="File", menu=self.file_menu, style="Toolbar.TMenubutton").pack(side="left", padx=(4, 0), pady=2)
         self.help_menu = tk.Menu(self.root, tearoff=0, **theme.popup_menu_kwargs())
         self.help_menu.add_command(label="About", command=self._show_about)
+        self.help_menu.add_command(label="Set up share links…", command=self._open_server_folder)
         self.help_menu.add_command(label="Open logs folder", command=lambda: capture.open_folder(str(APP_DIR)))
         self.help_menu.add_command(label="LCClips on GitHub", command=lambda: webbrowser.open(REPO_URL))
         ttk.Menubutton(bar, text="Help", menu=self.help_menu, style="Toolbar.TMenubutton").pack(side="left", padx=(2, 0), pady=2)
+
+    def _open_server_folder(self) -> None:
+        base = Path(sys.executable).parent if winapp.IS_FROZEN else Path(__file__).resolve().parent.parent
+        folder = base / "server"
+        if not folder.is_dir():
+            webbrowser.open(REPO_URL + "/tree/main/server")
+            return
+        messagebox.showinfo("Set up share links",
+                            "In the folder that opens, read README.md, then double-click setup.bat.\n"
+                            "It deploys your free Cloudflare share server and fills in LCClips' settings.",
+                            parent=self.root)
+        capture.open_folder(str(folder))
 
     def _show_about(self) -> None:
         messagebox.showinfo(f"About {APP_NAME}",
@@ -585,6 +591,9 @@ class App:
         self.dl_btn.pack(side="left", padx=(4, 0))
         add(files, "FFmpeg path (optional)", ttk.Entry(files, textvariable=var("ffmpeg_path")), ff_btns)
         add(files, "Close button hides to tray", ttk.Checkbutton(files, variable=var("close_to_tray", tk.BooleanVar)))
+        self.startup_var = tk.BooleanVar(value=winapp.startup_enabled())
+        if winapp.IS_WINDOWS:
+            add(files, "Start with Windows (in tray)", ttk.Checkbutton(files, variable=self.startup_var))
 
         aud = section("Audio", 0, 1)
         self.out_combo = ttk.Combobox(aud, textvariable=var("game_audio_device"), state="readonly")
@@ -786,6 +795,11 @@ class App:
     def apply(self) -> None:
         self.cfg = self._collect()
         self.cfg.save()
+        try:
+            if self.startup_var.get() != winapp.startup_enabled():
+                winapp.set_startup(self.startup_var.get())
+        except OSError as e:
+            log.warning("Couldn't change Start with Windows: %s", e)
         self._flash_saved()
         self.ffmpeg = capture.find_ffmpeg(self.cfg.ffmpeg_path)
         self.refresh_clips()
@@ -1017,6 +1031,12 @@ class App:
 
 
 def main() -> None:
+    if "--selftest" in sys.argv:
+        i = sys.argv.index("--selftest")
+        report = Path(sys.argv[i + 1]) if len(sys.argv) > i + 1 else APP_DIR / "selftest.txt"
+        sys.exit(winapp.selftest(report))
+    if not winapp.acquire_single_instance():
+        return  # the running copy was asked to show its window
     APP_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -1025,4 +1045,6 @@ def main() -> None:
     )
     if sys.platform != "win32":
         print("Note: LCClips' capture path (ddagrab/WASAPI) is Windows-only.")
-    App().run()
+    app = App()
+    winapp.listen_for_show(lambda: app.ui_q.put(app.show))
+    app.run()

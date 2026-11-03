@@ -1,10 +1,10 @@
-__pycache__/
 *.pyc
+*.spec
+.dev.vars
 .venv/
+.wrangler/
+__pycache__/
+bin/
 build/
 dist/
-*.spec
-bin/
 node_modules/
-.wrangler/
-.dev.vars

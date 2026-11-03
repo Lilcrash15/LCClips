@@ -60,12 +60,13 @@ def extract_ffmpeg(zip_path: Path, dest_dir: Path) -> Path:
     return out
 
 
-def install(progress: Callable[[float], None] | None = None) -> str:
+def install(progress: Callable[[float], None] | None = None, dest_dir: Path | None = None) -> str:
     """Download + extract. Returns the path to ffmpeg.exe. Blocking; run off the UI thread."""
+    dest_dir = dest_dir or INSTALL_DIR
     url = _resolve_url()
     log.info("Downloading FFmpeg from %s", url)
-    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    zip_path = INSTALL_DIR / "ffmpeg-download.zip"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = dest_dir / "ffmpeg-download.zip"
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=_HEADERS), timeout=60) as r, \
                 open(zip_path, "wb") as f:
@@ -76,7 +77,7 @@ def install(progress: Callable[[float], None] | None = None) -> str:
                 done += len(chunk)
                 if progress and total:
                     progress(done / total)
-        exe = extract_ffmpeg(zip_path, INSTALL_DIR)
+        exe = extract_ffmpeg(zip_path, dest_dir)
     finally:
         zip_path.unlink(missing_ok=True)
     flags = 0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
