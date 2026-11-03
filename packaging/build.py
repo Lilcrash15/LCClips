@@ -73,6 +73,7 @@ def main() -> None:
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
          "--name", "LCClips", "--icon", str(ico), "--version-file", str(vfile),
          "--add-binary", f"{ffmpeg};bin",
+         "--add-data", f"{ROOT / 'lcclips' / 'editor' / 'ui'};lcclips/editor/ui",
          "--collect-data", "soundcard", "--hidden-import", "pystray._win32",
          "--distpath", str(DIST), "--workpath", str(BUILD / "pyi"), "--specpath", str(BUILD),
          str(ROOT / "launcher.py")])

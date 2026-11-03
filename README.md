@@ -51,6 +51,12 @@ LCClips uses the same look as the other LC apps (LCBot and LCAI): the same theme
   - **All clips**: every clip in your clips folder, with search, length, resolution, size and whether it's shared.
   - **Selected clip** panel: a preview, the clip's details and share link, and the buttons **Share**, **Copy link**,
     **Download** (save a copy anywhere), **Open folder**, **Play** and **Delete** (moves the file to the Recycle Bin).
+- **✂ Edit in LC Editor** (selected clip panel, or **File → Open LC Editor…**): opens the built-in video cutter in its own window, with the clip loaded.
+  Mark In/Out (**I**/**O**) or drag the handles. Press **A** to add several parts, which are joined in order. Then **Cut & Save**.
+  - *Fast* is a lossless copy and near-instant, but the start snaps to a keyframe.
+  - *Precise* re-encodes on your GPU for frame-exact cuts.
+
+  Cuts saved in your clips folder appear in the library right away. Press the keyboard button in the editor's header to see all shortcuts.
 - **Settings tab**: Capture, Audio, Files & behavior, and Share links.
 - **Top bar**: a recording indicator, status messages, your hotkey and a **Save clip** button.
 
@@ -100,6 +106,7 @@ lcclips/audio.py    loopback + mic capture threads, mixer clocked to real time
 lcclips/capture.py  FFmpeg command builder, GPU encoder probing, segment ring, clip saving
 lcclips/app.py      main window (Clips / Settings / Themes), hotkey, tray icon
 lcclips/library.py  clip scanning, metadata cache, thumbnails, file actions
+lcclips/editor/     LC Editor: video cutter (local API + ui/index.html in an Edge app window)
 lcclips/gui/theme.py  LC-line theme presets (shared look with LCBot)
 lcclips/share.py    upload client (stdlib only), thumbnails, upload history
 server/             Cloudflare Worker + R2 share server, one-click setup

@@ -65,6 +65,8 @@ class Library:
         except OSError:
             files = []
         for p in files:
+            if p.name.startswith("."):  # LC Editor's in-progress exports (.lceditor-*.mp4)
+                continue
             try:
                 st = p.stat()
             except OSError:

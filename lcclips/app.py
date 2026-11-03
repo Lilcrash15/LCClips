@@ -16,6 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import __version__, audio, capture, ffmpeg_setup, library, share, updater, winapp
 from .config import APP_DIR, APP_NAME, DEVICE_DEFAULT, DEVICE_NONE, ENCODERS, RESOLUTIONS, Config
+from .editor import Editor
 from .gui import theme
 from .gui.icon import make_icon
 
@@ -82,6 +83,9 @@ class App:
         self._images: dict[tuple[str, int], object] = {}
         self._refresh_pending = False
         self.library = library.Library(lambda: self.ffmpeg, lambda key: self.ui_q.put(self._schedule_refresh))
+        # LC Editor runs in-process (local HTTP server + Edge app window), sharing our FFmpeg.
+        self.editor = Editor(APP_DIR / "editor", lambda: self.ffmpeg, accent=self._editor_accent,
+                             on_export_done=lambda path: self.ui_q.put(lambda: self._on_editor_export(path)))
 
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} -- v{__version__}")
@@ -152,6 +156,7 @@ class App:
         self.file_menu = tk.Menu(self.root, tearoff=0, **theme.popup_menu_kwargs())
         self.file_menu.add_command(label="Save clip now", command=self.save_clip)
         self.file_menu.add_command(label="Share a file…", command=self.share_pick)
+        self.file_menu.add_command(label="Open LC Editor…", command=lambda: self.open_editor(None))
         self.file_menu.add_command(label="Open clips folder", command=lambda: capture.open_folder(self.cfg.output_dir))
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Close LCClips", command=self.quit)
@@ -291,11 +296,13 @@ class App:
         self.b_play = ttk.Button(btns, text="▶ Play", command=self.play_selected)
         self.b_delete = ttk.Button(btns, text="Delete", command=self.delete_selected)
         layout = [(self.b_share, 0, 0), (self.b_copy, 0, 1), (self.b_download, 0, 2),
-                  (self.b_folder, 1, 0), (self.b_play, 1, 1), (self.b_delete, 1, 2)]
+                  (self.b_play, 1, 0), (self.b_folder, 1, 1), (self.b_delete, 1, 2)]
         for b, r, c in layout:
             b.configure(padding=(6, 7))
             b.grid(row=r, column=c, sticky="ew", padx=2, pady=2)
-        self._detail_buttons = [b for b, *_ in layout]
+        self.b_edit = ttk.Button(btns, text="✂  Edit in LC Editor", command=self.edit_selected, padding=(6, 7))
+        self.b_edit.grid(row=2, column=0, columnspan=3, sticky="ew", padx=2, pady=(6, 2))
+        self._detail_buttons = [b for b, *_ in layout] + [self.b_edit]
         self._update_details()
 
     # ------------------------------------------------------------------ clip data
@@ -607,6 +614,35 @@ class App:
             self.refresh_clips()
             return None
         return clip
+
+    # ------------------------------------------------------------------ LC Editor
+    def _editor_accent(self) -> tuple[str, str]:
+        a = theme.ACCENT.lstrip("#")
+        r, g, b = (int(a[i:i + 2], 16) for i in (0, 2, 4))
+        lighter = "#%02x%02x%02x" % tuple(int(c + (255 - c) * 0.3) for c in (r, g, b))
+        return theme.ACCENT, lighter
+
+    def open_editor(self, path: Path | None) -> None:
+        if not self.ffmpeg:
+            self.set_status("LC Editor needs FFmpeg - download it in Settings first.", "error")
+            return
+        try:
+            self.editor.open(str(path) if path else None)
+            self.set_status(f"Opened {path.name} in LC Editor." if path else "Opened LC Editor.")
+        except Exception as e:
+            log.exception("Couldn't open LC Editor")
+            self.set_status(f"Couldn't open LC Editor: {e}", "error")
+
+    def edit_selected(self) -> None:
+        if (c := self._selected_clip()):
+            self.open_editor(c.path)
+
+    def _on_editor_export(self, path: str) -> None:
+        self.refresh_clips()
+        if Path(path).parent.resolve() == Path(self.cfg.output_dir).resolve():
+            self.selected = str(Path(path))
+            self.refresh_clips()
+        self.set_status(f"✔ LC Editor saved {Path(path).name}", "ok")
 
     def play_selected(self) -> None:
         if (c := self._selected_clip()):
@@ -1179,6 +1215,10 @@ class App:
     def quit(self) -> None:
         if self.recorder:
             self.recorder.stop()
+        try:
+            self.editor.shutdown()
+        except Exception:
+            log.exception("Editor shutdown failed")
         if self.tray:
             self.tray.stop()
         self.root.destroy()

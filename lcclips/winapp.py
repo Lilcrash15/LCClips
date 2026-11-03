@@ -98,6 +98,62 @@ def set_startup(enabled: bool) -> None:
 
 # --------------------------------------------------------------------------- self-test (CI)
 
+def _editor_test(ffmpeg: str) -> str:
+    """Runs LC Editor's real HTTP API: open a clip, export Fast and Precise (2 clips joined)."""
+    import json
+    import os
+    import tempfile
+    import time
+    import urllib.request
+
+    from .editor import Editor
+    from .editor.server import UI_DIR
+
+    if not (UI_DIR / "index.html").is_file():
+        raise RuntimeError(f"editor UI missing at {UI_DIR}")
+    flags = 0x08000000 if IS_WINDOWS else 0
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "test.mp4")
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+                        "-f", "lavfi", "-i", "sine=440", "-t", "6", "-c:v", "libx264", "-preset", "ultrafast",
+                        "-g", "30", "-c:a", "aac", src], check=True, capture_output=True, timeout=60, creationflags=flags)
+        os.environ["LCE_NO_WINDOW"] = "1"
+        ed = Editor(Path(td) / "data", lambda: ffmpeg)
+        ed.start()
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+        def call(path, body=None):
+            r = urllib.request.Request(ed.base_url + path, data=None if body is None else json.dumps(body).encode(),
+                                       headers={"X-Token": ed.token, "Content-Type": "application/json"},
+                                       method="GET" if body is None else "POST")
+            with opener.open(r, timeout=60) as resp:
+                return json.loads(resp.read())
+
+        try:
+            if b"LC Editor" not in opener.open(f"{ed.url}", timeout=10).read():
+                raise RuntimeError("editor page didn't render")
+            info = call("/api/open", {"path": src})
+            results = []
+            for mode, segs in (("fast", [{"start": 1, "end": 4}]),
+                               ("precise", [{"start": 0.5, "end": 2}, {"start": 3, "end": 5}])):
+                out = os.path.join(td, f"cut_{mode}.mp4")
+                os.environ["LCE_SAVE"] = out
+                job = call("/api/export", {"segments": segs, "mode": mode, "encoder": "x264"})
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 90:
+                    j = call("/api/state")["job"]
+                    if j and j["id"] == job["id"] and j["status"] != "running":
+                        break
+                    time.sleep(0.2)
+                if j["status"] != "done" or not os.path.isfile(out):
+                    raise RuntimeError(f"{mode} export {j['status']}: {j.get('message')}")
+                results.append(f"{mode} {ed.ff.probe(out)['duration']:.1f}s")
+        finally:
+            os.environ.pop("LCE_SAVE", None)
+            ed.shutdown()
+        return f"opened {info['width']}x{info['height']} {info['duration']:.0f}s; " + ", ".join(results)
+
+
 def _pipeline_test(ffmpeg: str) -> str:
     """Runs the app's real recording command (test pattern instead of the screen,
     silent PCM on stdin like the audio mixer) and saves a clip from the buffer."""
@@ -200,6 +256,7 @@ def selftest(report: Path) -> int:
         check(f"encoder {enc}", lambda e=enc: e in ff_run("-encoders") or (_ for _ in ()).throw(RuntimeError("missing")))
 
     check("recording pipeline", lambda: _pipeline_test(ff))
+    check("LC Editor", lambda: _editor_test(ff))
     lines.append("RESULT " + ("PASS" if ok else "FAIL"))
     report.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1
