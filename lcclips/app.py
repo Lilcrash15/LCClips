@@ -1127,7 +1127,7 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _alert(self, title: str, sub: str = "", kind: str = "info", ms: int = 2600) -> None:
+    def _alert(self, title: str, sub: str = "", kind: str = "info", ms: int = 5000) -> None:
         """Thread-safe on-screen toast (respects the setting)."""
         if self.cfg.overlay_enabled:
             self.ui_q.put(lambda: self.overlay.show(title, sub, kind, self.cfg.overlay_position, ms))

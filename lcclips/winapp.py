@@ -153,11 +153,30 @@ def _toast_test() -> str:
         root = tk.Tk()
         root.withdraw()  # like LCClips hidden in the tray
         ov = Overlay(root)
-        ov.show("Clip saved", "Self-test", "ok", "Top right", ms=0)
-        for _ in range(30):
-            root.update()
-            time.sleep(0.02)
+        GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = -20, 0x80, 0x40000
+        ex = user32.GetWindowLongW(ctypes.c_void_p(ov.hwnd), GWL_EXSTYLE)
+        if not ex & WS_EX_TOOLWINDOW or ex & WS_EX_APPWINDOW:
+            raise RuntimeError("toast would get a taskbar button")
+        if user32.IsWindowVisible(ctypes.c_void_p(ov.hwnd)):
+            raise RuntimeError("toast visible before anything was saved")
+
+        def pump(sec: float) -> None:
+            end = time.monotonic() + sec
+            while time.monotonic() < end:
+                root.update()
+                time.sleep(0.02)
+
+        def pixel_at_toast():
+            from PIL import ImageGrab
+
+            x, y = ov._xy("Top right")
+            px = ImageGrab.grab(bbox=(x + 150, y + 30, x + 151, y + 31)).getpixel((0, 0))
+            return sum(px[:3]) / 3
+
+        ov.show("Clip saved", "Self-test", "ok", "Top right", ms=1500)
+        pump(0.6)
         visible = user32.IsWindowVisible(ctypes.c_void_p(ov.hwnd))
+        brightness = pixel_at_toast()
         user32.GetWindow.restype = ctypes.c_void_p
         h, above = ov.hwnd, False
         for _ in range(2000):  # walk down the z-order from the toast
@@ -168,12 +187,20 @@ def _toast_test() -> str:
                 above = True
                 break
         fg = user32.GetForegroundWindow()
+        pump(2.0)  # past its timeout + fade
+        gone = not user32.IsWindowVisible(ctypes.c_void_p(ov.hwnd))
+        after = pixel_at_toast()
         root.destroy()
         if not visible:
             raise RuntimeError("toast window not visible")
         if not above:
             raise RuntimeError("toast is BELOW the game window")
-        return f"visible, above the game window; game kept focus: {fg == game}"
+        if brightness < 12:
+            raise RuntimeError(f"toast not actually drawn on screen (pixel brightness {brightness:.0f})")
+        if not gone or after > 8:
+            raise RuntimeError("toast didn't disappear after its timeout")
+        return (f"on screen above the game (pixel {brightness:.0f} vs black game), no taskbar button, "
+                f"game kept focus: {fg == game}, gone after timeout")
     finally:
         game_proc.kill()
 
