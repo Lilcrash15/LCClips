@@ -971,6 +971,8 @@ class App:
         if self._hotkey_warning:
             log.warning(self._hotkey_warning)
             self.set_status(self._hotkey_warning, "error")
+        elif self.hotkey.notice:
+            log.info(self.hotkey.notice)
 
     def record_hotkey(self) -> None:
         try:

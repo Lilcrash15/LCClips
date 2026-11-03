@@ -71,10 +71,12 @@ class GlobalHotkey:
         self._tid = 0
         self._kb_handle = None
         self.backend = ""
+        self.notice: str | None = None  # informational (not an error) message for the UI
 
     def set(self, combo: str) -> str | None:
         """(Re)binds the hotkey. Returns a warning for the user, or None if all is well."""
         self.stop()
+        self.notice = None
         if IS_WINDOWS:
             try:
                 mods, vk = parse(combo)
@@ -85,11 +87,17 @@ class GlobalHotkey:
                 self.backend = "windows"
                 log.info("Hotkey %s registered with Windows", combo)
                 return None
-            # Someone else owns it - a keyboard hook still works for physical keys.
-            fallback = self._start_hook(combo)
-            return (f"{combo.upper()} is already used by another app ({err}). It will still work from your keyboard, "
-                    f"but not from Stream Deck - pick a different hotkey in Settings."
-                    if fallback is None else f"Couldn't register {combo.upper()}: {err}")
+            # Another app (often the NVIDIA overlay) owns this combo. A low-level hook
+            # matching virtual-key codes sees the key before that app does, from the
+            # keyboard and from Stream Deck alike.
+            hook_ok, hook_err = self._start_llhook(mods, vk)
+            if hook_ok:
+                self.backend = "hook"
+                self.notice = (f"{combo.upper()} is also a shortcut in another app (often the NVIDIA overlay). "
+                               f"LCClips still catches it from your keyboard and Stream Deck.")
+                log.info("Hotkey %s taken by another app (%s); using low-level hook", combo, err)
+                return None
+            return f"Couldn't set up {combo.upper()}: {err}; {hook_err}"
         return self._start_hook(combo)
 
     # ------------------------------------------------------------------ Windows
@@ -125,7 +133,79 @@ class GlobalHotkey:
         ready.wait(3)
         return result.get("ok", False), result.get("err", "timed out")
 
-    # ------------------------------------------------------------------ keyboard-hook fallback
+    # ------------------------------------------------------------------ low-level hook (virtual-key based)
+    def _start_llhook(self, mods: int, vk: int) -> tuple[bool, str]:
+        from ctypes import wintypes
+
+        user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+        result: dict = {}
+        ready = threading.Event()
+
+        class KBDLLHOOKSTRUCT(ctypes.Structure):
+            _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD), ("flags", wintypes.DWORD),
+                        ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_void_p)]
+
+        HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+        user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallNextHookEx.restype = ctypes.c_ssize_t
+        user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, ctypes.c_void_p, wintypes.DWORD]
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+        mod_vks = {MOD_CONTROL: (0x11, 0xA2, 0xA3), MOD_ALT: (0x12, 0xA4, 0xA5),
+                   MOD_SHIFT: (0x10, 0xA0, 0xA1), MOD_WIN: (0x5B, 0x5C)}
+        all_mod_vks = {v for vs in mod_vks.values() for v in vs}
+        down: set[int] = set()
+
+        def held(flag: int) -> bool:
+            return any(v in down or user32.GetAsyncKeyState(v) & 0x8000 for v in mod_vks[flag])
+
+        def proc(code, wparam, lparam):
+            if code == 0:
+                k = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents.vkCode
+                if wparam in (0x100, 0x104):  # WM_KEYDOWN / WM_SYSKEYDOWN
+                    repeat = k in down
+                    down.add(k)
+                    if k == vk and not repeat and all(held(f) == bool(mods & f) for f in mod_vks):
+                        # Never block the hook (Windows drops slow hooks): run the callback elsewhere.
+                        threading.Thread(target=self._safe_callback, daemon=True).start()
+                elif wparam in (0x101, 0x105):  # WM_KEYUP / WM_SYSKEYUP
+                    down.discard(k)
+                    if k in all_mod_vks:
+                        for vs in mod_vks.values():
+                            if k in vs:
+                                down.difference_update(vs)
+            return user32.CallNextHookEx(None, code, wparam, lparam)
+
+        cb = HOOKPROC(proc)
+
+        def loop():
+            self._tid = kernel32.GetCurrentThreadId()
+            hook = user32.SetWindowsHookExW(13, cb, kernel32.GetModuleHandleW(None), 0)  # WH_KEYBOARD_LL
+            result["ok"] = bool(hook)
+            result["err"] = "" if hook else ctypes.FormatError(kernel32.GetLastError()).strip()
+            ready.set()
+            if not hook:
+                return
+            msg = wintypes.MSG()
+            try:
+                while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                    pass
+            finally:
+                user32.UnhookWindowsHookEx(ctypes.c_void_p(hook))
+
+        self._hook_proc = cb  # keep the callback alive
+        self._thread = threading.Thread(target=loop, daemon=True, name="hotkey-hook")
+        self._thread.start()
+        ready.wait(3)
+        return result.get("ok", False), result.get("err", "timed out")
+
+    def _safe_callback(self) -> None:
+        try:
+            self.callback()
+        except Exception:
+            log.exception("hotkey callback failed")
+
+    # ------------------------------------------------------------------ keyboard-library fallback (non-Windows)
     def _start_hook(self, combo: str) -> str | None:
         try:
             import keyboard

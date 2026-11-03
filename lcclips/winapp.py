@@ -125,28 +125,64 @@ def set_startup(enabled: bool) -> None:
 # --------------------------------------------------------------------------- self-test (CI)
 
 def _hotkey_test() -> str:
-    """Registers a hotkey and injects it the way Stream Deck does (virtual-key
-    codes, no scan code) to prove RegisterHotKey sees injected input."""
+    """Injects key presses the way Stream Deck does (virtual-key codes, no scan
+    code) and checks LCClips receives them - both when it owns the hotkey and
+    when another app already registered the same combination."""
+    from ctypes import wintypes
+
     from . import hotkeys
 
-    fired = threading.Event()
-    hk = hotkeys.GlobalHotkey(fired.set)
-    warn = hk.set("ctrl+alt+shift+f24")
-    if warn:
-        raise RuntimeError(warn)
-    backend = hk.backend
-    try:
-        keybd_event = ctypes.windll.user32.keybd_event
-        keys = (0x11, 0x12, 0x10, 0x87)  # Ctrl, Alt, Shift, F24
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    combo, keys = "ctrl+alt+shift+f24", (0x11, 0x12, 0x10, 0x87)  # Ctrl, Alt, Shift, F24
+
+    def inject() -> None:
         for vk in keys:
-            keybd_event(vk, 0, 0, 0)
+            user32.keybd_event(vk, 0, 0, 0)
         for vk in reversed(keys):
-            keybd_event(vk, 0, 0x2, 0)  # KEYEVENTF_KEYUP
-        if not fired.wait(3):
-            raise RuntimeError("no WM_HOTKEY (no interactive desktop on this machine?)")
+            user32.keybd_event(vk, 0, 0x2, 0)  # KEYEVENTF_KEYUP
+
+    def attempt() -> str:
+        fired = threading.Event()
+        hk = hotkeys.GlobalHotkey(fired.set)
+        warn = hk.set(combo)
+        if warn:
+            raise RuntimeError(warn)
+        backend = hk.backend
+        try:
+            time.sleep(0.2)
+            inject()
+            if not fired.wait(3):
+                raise RuntimeError(f"no key press received via {backend}")
+        finally:
+            hk.stop()
+        return backend
+
+    import time
+
+    own = attempt()
+    # Simulate the user's case: another app (e.g. NVIDIA overlay) owns the combo.
+    occupied, stop_tid = threading.Event(), [0]
+
+    def occupier():
+        stop_tid[0] = kernel32.GetCurrentThreadId()
+        user32.RegisterHotKey(None, 7, 0x1 | 0x2 | 0x4, 0x87)
+        occupied.set()
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            pass
+        user32.UnregisterHotKey(None, 7)
+
+    t = threading.Thread(target=occupier, daemon=True)
+    t.start()
+    occupied.wait(3)
+    try:
+        taken = attempt()
     finally:
-        hk.stop()
-    return f"registered via {backend}; injected key press received"
+        user32.PostThreadMessageW(stop_tid[0], 0x0012, 0, 0)
+        t.join(2)
+    if taken != "hook":
+        raise RuntimeError(f"expected hook fallback, got {taken}")
+    return f"free combo -> {own}; combo owned by another app -> {taken}; injected presses received both times"
 
 
 def _editor_test(ffmpeg: str) -> str:
