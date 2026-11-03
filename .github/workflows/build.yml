@@ -29,13 +29,6 @@ jobs:
         run: |
           if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
 
-      - name: Cache FFmpeg download
-        uses: actions/cache@v4
-        with:
-          path: build/bin/ffmpeg.exe
-          key: ffmpeg-${{ github.run_id }}
-          restore-keys: ffmpeg-
-
       - name: Build app + installer (includes packaged self-test)
         run: python packaging/build.py
 
