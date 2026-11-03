@@ -14,11 +14,12 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, audio, capture, ffmpeg_setup, library, share, updater, winapp
+from . import __version__, audio, capture, ffmpeg_setup, hotkeys, library, share, updater, winapp
 from .config import APP_DIR, APP_NAME, DEVICE_DEFAULT, DEVICE_NONE, ENCODERS, RESOLUTIONS, Config
 from .editor import Editor
 from .gui import theme
 from .gui.icon import make_icon
+from .gui.overlay import POSITIONS, Overlay
 
 log = logging.getLogger(APP_NAME)
 
@@ -29,7 +30,12 @@ PREVIEW_W = 300
 REPO_URL = "https://github.com/Lilcrash15/LCClips"
 
 
+SOUNDS_ON = True
+
+
 def _beep(ok: bool) -> None:
+    if not SOUNDS_ON:
+        return
     try:
         import winsound
 
@@ -73,7 +79,6 @@ class App:
         self.recorder: capture.Recorder | None = None
         self.monitors: list[tuple[int, int, int]] = []
         self.ui_q: queue.Queue = queue.Queue()
-        self._hotkey_handle = None
         self._busy = False
         self._sharing: set[str] = set()
         self.last_clip: Path | None = None
@@ -97,6 +102,12 @@ class App:
         # Readonly comboboxes keep a stuck accent "selected" fill after a pick (same fix as LCBot).
         self.root.bind_class("TCombobox", "<<ComboboxSelected>>", lambda e: e.widget.selection_clear(), add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        global SOUNDS_ON
+        SOUNDS_ON = self.cfg.sounds
+        self.hotkey = hotkeys.GlobalHotkey(self.save_clip)
+        self._hotkey_warning: str | None = None
+        self._saving = False
+        self.overlay = Overlay(self.root)
 
         self._build_toolbar()
         self._build_ui()
@@ -758,6 +769,13 @@ class App:
         cap = section("Capture", 0, 0)
         add(cap, "Save-clip hotkey", ttk.Entry(cap, textvariable=var("hotkey")),
             ttk.Button(cap, text="Record…", command=self.record_hotkey))
+        sd = ttk.Frame(cap)
+        ttk.Label(sd, text="Stream Deck: a Hotkey action with this combo works, or use",
+                  style="Muted.TLabel").pack(side="left")
+        ttk.Button(sd, text="Copy Open command", command=self._copy_streamdeck_cmd,
+                   padding=(6, 2)).pack(side="left", padx=(6, 0))
+        sd.grid(row=cap._row, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        cap._row += 1
         add(cap, "Clip length (seconds)", ttk.Spinbox(cap, from_=5, to=600, increment=5,
                                                       textvariable=var("clip_seconds", tk.IntVar), width=8))
         self.mon_combo = ttk.Combobox(cap, state="readonly")
@@ -778,12 +796,13 @@ class App:
         self.dl_btn.pack(side="left", padx=(4, 0))
         add(files, "FFmpeg path (optional)", ttk.Entry(files, textvariable=var("ffmpeg_path")), ff_btns)
         add(files, "Close button hides to tray", ttk.Checkbutton(files, variable=var("close_to_tray", tk.BooleanVar)))
+
         add(files, "Check for updates automatically", ttk.Checkbutton(files, variable=var("check_updates", tk.BooleanVar)))
         self.startup_var = tk.BooleanVar(value=winapp.startup_enabled())
         if winapp.IS_WINDOWS:
             add(files, "Start with Windows (in tray)", ttk.Checkbutton(files, variable=self.startup_var))
 
-        aud = section("Audio", 0, 1)
+        aud = section("Audio & alerts", 0, 1)
         self.out_combo = ttk.Combobox(aud, textvariable=var("game_audio_device"), state="readonly")
         add(aud, "Game audio (output)", self.out_combo, ttk.Button(aud, text="Refresh", command=self.refresh_devices))
         add(aud, "Game volume", ttk.Scale(aud, from_=0, to=2, variable=var("game_volume", tk.DoubleVar)))
@@ -792,6 +811,13 @@ class App:
         add(aud, "Mic volume", ttk.Scale(aud, from_=0, to=2, variable=var("mic_volume", tk.DoubleVar)))
         add(aud, "Audio sync offset (ms)", ttk.Spinbox(aud, from_=-1000, to=1000, increment=10,
                                                        textvariable=var("audio_offset_ms", tk.IntVar), width=8))
+        alert = ttk.Frame(aud)
+        ttk.Checkbutton(alert, variable=var("overlay_enabled", tk.BooleanVar)).pack(side="left")
+        ttk.Combobox(alert, values=POSITIONS, state="readonly", textvariable=var("overlay_position"),
+                     width=13).pack(side="left", padx=(6, 0))
+        ttk.Button(alert, text="Test", command=self._test_overlay, padding=(8, 2)).pack(side="left", padx=(6, 0))
+        add(aud, "On-screen clip alert", alert)
+        add(aud, "Clip sounds", ttk.Checkbutton(aud, variable=var("sounds", tk.BooleanVar)))
 
         sh = section("Share links", 1, 1)
         add(sh, "Server URL", ttk.Entry(sh, textvariable=var("share_server_url")),
@@ -941,21 +967,10 @@ class App:
 
     # ------------------------------------------------------------------ hotkeys
     def bind_hotkey(self) -> None:
-        try:
-            import keyboard
-        except Exception as e:
-            self.set_status(f"Hotkeys unavailable: {e}", "error")
-            return
-        if self._hotkey_handle is not None:
-            try:
-                keyboard.remove_hotkey(self._hotkey_handle)
-            except (KeyError, ValueError):
-                pass
-            self._hotkey_handle = None
-        try:
-            self._hotkey_handle = keyboard.add_hotkey(self.cfg.hotkey, self.save_clip, suppress=False)
-        except Exception as e:
-            self.set_status(f"Invalid hotkey '{self.cfg.hotkey}': {e}", "error")
+        self._hotkey_warning = self.hotkey.set(self.cfg.hotkey)
+        if self._hotkey_warning:
+            log.warning(self._hotkey_warning)
+            self.set_status(self._hotkey_warning, "error")
 
     def record_hotkey(self) -> None:
         try:
@@ -989,6 +1004,8 @@ class App:
     def apply(self) -> None:
         self.cfg = self._collect()
         self.cfg.save()
+        global SOUNDS_ON
+        SOUNDS_ON = self.cfg.sounds
         try:
             if self.startup_var.get() != winapp.startup_enabled():
                 winapp.set_startup(self.startup_var.get())
@@ -1029,7 +1046,9 @@ class App:
                 self.recorder = rec
                 path = "GPU zero-copy" if plan.gpu_path else "CPU scaling"
                 msg = f"Recording  {plan.width}x{plan.height} @ {cfg.fps} fps  ·  {plan.encoder} ({path})"
-                self.ui_q.put(lambda: (self.set_status(msg), self._set_recording(True)))
+                warn = self._hotkey_warning
+                self.ui_q.put(lambda: (self.set_status(warn or msg, "error" if warn else "info"),
+                                       self._set_recording(True)))
             except Exception as e:
                 log.exception("Start failed")
                 err = str(e)
@@ -1039,21 +1058,45 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _alert(self, title: str, sub: str = "", kind: str = "info", ms: int = 2600) -> None:
+        """Thread-safe on-screen toast (respects the setting)."""
+        if self.cfg.overlay_enabled:
+            self.ui_q.put(lambda: self.overlay.show(title, sub, kind, self.cfg.overlay_position, ms))
+
+    def _test_overlay(self) -> None:
+        pos = self.vars["overlay_position"].get()
+        self.overlay.show("Clip saved", f"Test alert · {pos}", "ok", pos)
+
+    def _copy_streamdeck_cmd(self) -> None:
+        cmd = (f'"{sys.executable}" --save-clip' if winapp.IS_FROZEN
+               else f'"{sys.executable}" -m lcclips --save-clip')
+        self._copy(cmd)
+        self.set_status("Copied. In Stream Deck add System → Open and paste it as the App / File.", "ok")
+
     def save_clip(self) -> None:
+        """Hotkey / Stream Deck / button. Gives instant feedback, then saves in the background."""
         rec = self.recorder
         if rec is None:
             _beep(False)
+            self._alert("Not recording", "LCClips isn't capturing right now", "error")
             return
+        if self._saving:
+            return  # a second press while saving does nothing
+        self._saving = True
+        _beep(True)  # immediate "got it" tone
+        self._alert("Saving clip…", f"Last {self.cfg.clip_seconds}s", "info", ms=0)
         self.ui_q.put(lambda: self.set_status("Saving clip…"))
 
         def worker():
             try:
                 out = rec.save_clip()
                 self.last_clip = out
-                _beep(True)
 
                 def done():
                     self.set_status(f"✔ Saved {out.name}", "ok")
+                    title = share.title_from_filename(out)
+                    self._alert("Clip saved", f"{title} · {self.cfg.clip_seconds}s"
+                                + (" · uploading…" if self.cfg.auto_upload and self.cfg.share_server_url else ""), "ok")
                     self.selected = str(out)
                     self.refresh_clips()
                     if self.cfg.auto_upload and self.cfg.share_server_url:
@@ -1063,6 +1106,9 @@ class App:
                 _beep(False)
                 err = str(e)
                 self.ui_q.put(lambda: self.set_status(f"Save failed: {err}", "error"))
+                self._alert("Clip not saved", err[:60], "error", ms=4000)
+            finally:
+                self._saving = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1122,6 +1168,7 @@ class App:
                 self.ui_q.put(done)
                 _beep(True)
                 self._notify(item.url, "Clip link copied")
+                self._alert("Link copied", item.url.split("://", 1)[-1], "ok")
             except Exception as e:
                 log.exception("Share failed")
                 _beep(False)
@@ -1213,6 +1260,7 @@ class App:
             self.cfg.save()
 
     def quit(self) -> None:
+        self.hotkey.stop()
         if self.recorder:
             self.recorder.stop()
         try:
@@ -1234,6 +1282,8 @@ def main() -> None:
         i = sys.argv.index("--selftest")
         report = Path(sys.argv[i + 1]) if len(sys.argv) > i + 1 else APP_DIR / "selftest.txt"
         sys.exit(winapp.selftest(report))
+    if "--save-clip" in sys.argv and winapp.signal_running("save"):
+        return
     if not winapp.acquire_single_instance():
         return  # the running copy was asked to show its window
     APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1246,4 +1296,5 @@ def main() -> None:
         print("Note: LCClips' capture path (ddagrab/WASAPI) is Windows-only.")
     app = App()
     winapp.listen_for_show(lambda: app.ui_q.put(app.show))
+    winapp.listen_for_save(app.save_clip)  # LCClips.exe --save-clip
     app.run()

@@ -71,6 +71,16 @@ LCClips uses the same look as the other LC apps (LCBot and LCAI): the same theme
 - **Microphone**: any input device, or *None*.
 - **Volumes and audio sync offset**: fine-tune the mix and alignment.
 
+## Hotkey, Stream Deck and alerts
+
+- **The save hotkey** (default **Alt+F10**) is registered with Windows itself, so it works from your keyboard and from macro pads like the **Elgato Stream Deck**.
+  You hear a tone the moment you press it, and a small **"Saving clip… → Clip saved"** toast appears in the corner of your screen.
+  The toast never takes focus and clicks pass through it. Choose its corner, or turn it off, in **Settings → Audio & alerts**.
+- **Stream Deck**, either way works:
+  - a **Hotkey** action set to the same combination; or
+  - **System → Open** with the command from **Settings → Capture → Copy Open command**, which is `LCClips.exe --save-clip`.
+- If the status line says the hotkey is **already used by another app**, another program has already claimed that combination. The **NVIDIA overlay** is the usual one: its own Instant Replay save is also Alt+F10. Pick a different hotkey in LCClips, or turn off NVIDIA Instant Replay.
+
 ## Share links (like Medal)
 
 LCClips can upload a clip and copy a short link to your clipboard. Discord and X play the video inline from that link.

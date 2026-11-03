@@ -209,6 +209,25 @@ def _safe_name(s: str) -> str:
     return s[:60] or "Clip"
 
 
+def _newest_segment(seg_dir: Path) -> Path | None:
+    try:
+        return max(seg_dir.glob("seg_*.ts"), key=lambda p: p.stat().st_mtime, default=None)
+    except OSError:
+        return None
+
+
+def wait_for_segment_rollover(seg_dir: Path, timeout: float) -> None:
+    """Returns once the segment being written right now has been closed."""
+    current = _newest_segment(seg_dir)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.04)
+        n = _newest_segment(seg_dir)
+        if current is None or (n is not None and n != current):
+            break
+    time.sleep(0.05)  # let the muxer finish closing the file
+
+
 def completed_segments(seg_dir: Path) -> list[Path]:
     """Finished segments, oldest first (the newest file is still being written)."""
     segs = sorted(seg_dir.glob("seg_*.ts"), key=lambda p: p.stat().st_mtime)
@@ -296,8 +315,9 @@ class Recorder:
             seconds = seconds or self.cfg.clip_seconds
             title = _safe_name(_foreground_title())
             # Let the segment that contains "now" finish so the clip includes
-            # the moment the hotkey was pressed.
-            time.sleep(SEGMENT_SECONDS + 0.3)
+            # the moment the hotkey was pressed - but only as long as needed
+            # (about half a segment on average, instead of a fixed wait).
+            wait_for_segment_rollover(BUFFER_DIR, SEGMENT_SECONDS + 0.6)
             segs = completed_segments(BUFFER_DIR)
             count = max(1, seconds // SEGMENT_SECONDS)
             segs = segs[-count:]

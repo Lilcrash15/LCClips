@@ -15,11 +15,28 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "LCClips"  # same value name the installer writes
 _MUTEX_NAME = "Local\\LCClips.SingleInstance"
 _SHOW_EVENT = "Local\\LCClips.ShowWindow"
+_SAVE_EVENT = "Local\\LCClips.SaveClip"  # `LCClips.exe --save-clip` (Stream Deck "Open" action)
 
 _mutex_handle = None
 
 
 # --------------------------------------------------------------------------- single instance
+
+def signal_running(action: str) -> bool:
+    """Tells an already-running LCClips to 'show' its window or 'save' a clip.
+    Returns False if no LCClips is running. Stdlib-only so launcher.py can call
+    it before importing the (slow-to-load) app."""
+    if not IS_WINDOWS:
+        return False
+    k32 = ctypes.windll.kernel32
+    k32.OpenEventW.restype = ctypes.c_void_p
+    ev = k32.OpenEventW(0x0002, False, _SAVE_EVENT if action == "save" else _SHOW_EVENT)  # EVENT_MODIFY_STATE
+    if not ev:
+        return False
+    k32.SetEvent(ctypes.c_void_p(ev))
+    k32.CloseHandle(ctypes.c_void_p(ev))
+    return True
+
 
 def acquire_single_instance() -> bool:
     """True if we're the first instance. Otherwise asks the running one to show its window."""
@@ -43,11 +60,20 @@ def acquire_single_instance() -> bool:
 
 def listen_for_show(callback: Callable[[], None]) -> None:
     """Calls `callback` (from a worker thread) whenever a second launch asks us to show."""
+    _listen(_SHOW_EVENT, callback)
+
+
+def listen_for_save(callback: Callable[[], None]) -> None:
+    """Calls `callback` whenever `LCClips.exe --save-clip` is run."""
+    _listen(_SAVE_EVENT, callback)
+
+
+def _listen(name: str, callback: Callable[[], None]) -> None:
     if not IS_WINDOWS:
         return
     k32 = ctypes.windll.kernel32
     k32.CreateEventW.restype = ctypes.c_void_p
-    ev = k32.CreateEventW(None, False, False, _SHOW_EVENT)  # auto-reset
+    ev = k32.CreateEventW(None, False, False, name)  # auto-reset
     if not ev:
         return
 

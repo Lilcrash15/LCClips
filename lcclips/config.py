@@ -40,6 +40,9 @@ class Config:
     ffmpeg_path: str = ""  # empty = auto-detect
     check_updates: bool = True  # check GitHub Releases at startup and every few hours
     theme: str = "classic"  # LC-line theme preset (see gui/theme.py)
+    overlay_enabled: bool = True  # small on-screen "Clip saved" toast
+    overlay_position: str = "Top right"
+    sounds: bool = True
     close_to_tray: bool = True  # X button hides to the tray; quit from the tray menu
     tray_notice_shown: bool = False
     # Share links (see server/README.md)
