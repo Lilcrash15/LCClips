@@ -98,6 +98,58 @@ def set_startup(enabled: bool) -> None:
 
 # --------------------------------------------------------------------------- self-test (CI)
 
+def _pipeline_test(ffmpeg: str) -> str:
+    """Runs the app's real recording command (test pattern instead of the screen,
+    silent PCM on stdin like the audio mixer) and saves a clip from the buffer."""
+    import tempfile
+    import time
+
+    from . import audio, capture
+    from .config import Config
+
+    cfg = Config(clip_seconds=5, fps=30, encoder="libx264", bitrate_mbps=4)
+    plan = capture.VideoPlan("libx264", "testsrc2=size=640x360:rate=30,format=nv12",
+                             capture._encoder_args("libx264", cfg.fps, cfg.bitrate_mbps), 640, 360, False)
+    with tempfile.TemporaryDirectory() as td:
+        seg_dir = Path(td) / "buf"
+        seg_dir.mkdir()
+        cmd = capture.build_record_cmd(ffmpeg, plan, cfg, seg_dir)
+        flags = 0x08000000 if IS_WINDOWS else 0
+        err_path = Path(td) / "err.txt"
+        with open(err_path, "w") as err:
+            p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=err, creationflags=flags)
+            block = bytes(audio.BLOCK * audio.CHANNELS * 4)
+            t0 = time.monotonic()
+            try:
+                while time.monotonic() - t0 < 4 and p.poll() is None:
+                    p.stdin.write(block)
+                    time.sleep(audio.BLOCK / audio.SAMPLE_RATE)
+            except OSError:
+                pass
+            alive = p.poll() is None
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+            p.terminate()
+            try:
+                p.wait(10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(10)
+        if not alive:
+            raise RuntimeError("recorder exited: " + err_path.read_text(errors="replace").strip()[-300:])
+        segs = capture.completed_segments(seg_dir)
+        if len(segs) < 2:
+            raise RuntimeError(f"only {len(segs)} segments written")
+        out = Path(td) / "clip.mp4"
+        capture.concat_segments(ffmpeg, segs, out)
+        (w, h), dur = __import__("lcclips.share", fromlist=["probe"]).probe(ffmpeg, out)
+        if not out.exists() or dur <= 0:
+            raise RuntimeError("saved clip is empty")
+        return f"{len(segs)} segments -> clip {w}x{h} {dur:.1f}s"
+
+
 def selftest(report: Path) -> int:
     """Used by the build pipeline on the packaged .exe: checks every dependency
     loads and the bundled FFmpeg has what LCClips needs. Writes a report file
@@ -147,6 +199,7 @@ def selftest(report: Path) -> int:
     for enc in ("h264_nvenc", "h264_amf", "h264_qsv", "libx264", "aac"):
         check(f"encoder {enc}", lambda e=enc: e in ff_run("-encoders") or (_ for _ in ()).throw(RuntimeError("missing")))
 
+    check("recording pipeline", lambda: _pipeline_test(ff))
     lines.append("RESULT " + ("PASS" if ok else "FAIL"))
     report.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1

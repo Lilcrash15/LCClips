@@ -60,7 +60,10 @@ def main() -> None:
     ico = write_ico(BUILD / "icon.ico")
     ffmpeg = BUILD / "bin" / "ffmpeg.exe"
     if not ffmpeg.exists():
-        print("Downloading FFmpeg…", flush=True)
+        url = ffmpeg_setup.resolve_url()
+        print(f"Downloading FFmpeg: {url}", flush=True)
+        if url == ffmpeg_setup.FALLBACK_URL:
+            print("  (no stable release build found - using the development build)", flush=True)
         ffmpeg_setup.install(dest_dir=BUILD / "bin")
 
     parts = (__version__.split(".") + ["0", "0", "0"])[:4]

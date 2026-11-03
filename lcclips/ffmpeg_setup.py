@@ -20,7 +20,8 @@ log = logging.getLogger(__name__)
 INSTALL_DIR = APP_DIR / "bin"
 RELEASE_API = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest"
 FALLBACK_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-_RELEASE_RE = re.compile(r"^ffmpeg-n(\d+)\.(\d+)-latest-win64-gpl-\d+\.\d+\.zip$")
+# e.g. ffmpeg-n8.0-latest-win64-gpl-8.0.zip (also tolerates n8.0.1 / -8.0.1)
+_RELEASE_RE = re.compile(r"^ffmpeg-n(\d+)\.(\d+)(?:\.\d+)?-latest-win64-gpl-[\d.]+\.zip$")
 _HEADERS = {"User-Agent": f"LCClips/{__version__}"}
 
 
@@ -36,7 +37,7 @@ def pick_download_url(assets: list[dict]) -> str:
     return best[1] if best else FALLBACK_URL
 
 
-def _resolve_url() -> str:
+def resolve_url() -> str:
     try:
         req = urllib.request.Request(RELEASE_API, headers={**_HEADERS, "Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -63,7 +64,7 @@ def extract_ffmpeg(zip_path: Path, dest_dir: Path) -> Path:
 def install(progress: Callable[[float], None] | None = None, dest_dir: Path | None = None) -> str:
     """Download + extract. Returns the path to ffmpeg.exe. Blocking; run off the UI thread."""
     dest_dir = dest_dir or INSTALL_DIR
-    url = _resolve_url()
+    url = resolve_url()
     log.info("Downloading FFmpeg from %s", url)
     dest_dir.mkdir(parents=True, exist_ok=True)
     zip_path = dest_dir / "ffmpeg-download.zip"

@@ -176,8 +176,7 @@ def build_record_cmd(ffmpeg: str, plan: VideoPlan, cfg: Config, seg_dir: Path) -
            "-f", "lavfi", "-i", plan.graph]
     if cfg.audio_offset_ms:
         cmd += ["-itsoffset", f"{cfg.audio_offset_ms / 1000:.3f}"]
-    cmd += ["-thread_queue_size", "1024",
-            "-f", "f32le", "-ar", str(audio.SAMPLE_RATE), "-ac", str(audio.CHANNELS), "-i", "pipe:0",
+    cmd += ["-f", "f32le", "-ar", str(audio.SAMPLE_RATE), "-ac", str(audio.CHANNELS), "-i", "pipe:0",
             "-map", "0:v", "-map", "1:a",
             *plan.args,
             "-c:a", "aac", "-b:a", "160k",
