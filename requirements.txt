@@ -1,0 +1,5 @@
+numpy>=1.24
+soundcard>=0.4.3
+keyboard>=0.13.5
+pystray>=0.19
+Pillow>=10.0
