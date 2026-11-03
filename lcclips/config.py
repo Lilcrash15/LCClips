@@ -38,6 +38,8 @@ class Config:
     audio_offset_ms: int = 0  # +delays audio, -advances it
     output_dir: str = field(default_factory=_default_clips_dir)
     ffmpeg_path: str = ""  # empty = auto-detect
+    close_to_tray: bool = True  # X button hides to the tray; quit from the tray menu
+    tray_notice_shown: bool = False
     # Share links (see server/README.md)
     share_server_url: str = ""
     share_token: str = ""

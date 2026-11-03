@@ -19,13 +19,11 @@ FFmpeg runs at *below-normal* process priority so the game always wins.
 ## Setup
 
 1. Install **Python 3.10+** from python.org.
-2. Get **FFmpeg 7.1 or newer** (a "full" Windows build from gyan.dev or BtbN). Do one of the following:
-   - put it on your `PATH`, or
-   - put `ffmpeg.exe` in `lcclips\bin\`, or
-   - set the path in the app.
-
-   FFmpeg 8+ is recommended, because it adds `scale_d3d11` for GPU-side resizing on NVIDIA and AMD.
-3. Double-click `run.bat`. The first run creates a virtual environment and installs the dependencies.
+2. Double-click `run.bat`. The first run creates a virtual environment and installs the dependencies.
+3. **FFmpeg:** if LCClips can't find it, it offers to download it for you, about 150 MB one time. It saves the static
+   BtbN build (which includes the NVENC, AMF and QSV encoders) to `%APPDATA%\LCClips\bin`. You can also click
+   **Download** next to *FFmpeg path* at any time.
+   To install it by hand instead, use FFmpeg 7.1 or newer (8+ recommended), then either put it on your `PATH` or Browse to `ffmpeg.exe` in the app.
 
 Settings are saved to `%APPDATA%\LCClips\config.json`. Logs are in the same folder (`lcclips.log`, `ffmpeg.log`).
 
@@ -52,7 +50,11 @@ It uses your own free Cloudflare server. To set it up, follow **[server/README.m
 
 ## Tray and startup
 
-Closing the window keeps LCClips running in the system tray. Start it hidden with `run.bat --minimized`. To launch it at login, put a shortcut to that command in `shell:startup`.
+Clicking **X** hides LCClips to the system tray, and it keeps recording. Left-click the tray icon to open the settings again.
+To exit, right-click the tray icon and choose **Close LCClips**. You can turn this off with *Close button hides to tray*.
+If you don't see the icon, click the **^** arrow on the taskbar. You can drag the icon out of there so it's always visible.
+
+Start LCClips hidden with `run.bat --minimized`. To launch it at login, put a shortcut to that command in `shell:startup`.
 
 ## Standalone .exe
 

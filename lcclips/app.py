@@ -10,7 +10,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import audio, capture, share
+from . import audio, capture, ffmpeg_setup, share
 from .config import APP_DIR, APP_NAME, DEVICE_DEFAULT, DEVICE_NONE, ENCODERS, RESOLUTIONS, Config
 
 log = logging.getLogger(APP_NAME)
@@ -48,7 +48,8 @@ class App:
         self.root.after(1000, self._watchdog)
 
         if not self.ffmpeg:
-            self.set_status("FFmpeg not found - set its path below and click Apply.", error=True)
+            self.set_status("FFmpeg not found. Click 'Download' next to FFmpeg path, or browse to ffmpeg.exe.", error=True)
+            self.root.after(400, self._offer_ffmpeg_download)
         else:
             self.restart()
 
@@ -97,8 +98,12 @@ class App:
         ttk.Separator(f).grid(row=row, column=0, columnspan=3, sticky="ew", pady=8); row += 1
         add("Clips folder", ttk.Entry(f, textvariable=var("output_dir"), width=34),
             ttk.Button(f, text="Browse…", command=lambda: self._browse_dir("output_dir")))
-        add("FFmpeg path (optional)", ttk.Entry(f, textvariable=var("ffmpeg_path"), width=34),
-            ttk.Button(f, text="Browse…", command=self._browse_ffmpeg))
+        ff_btns = ttk.Frame(f)
+        ttk.Button(ff_btns, text="Browse…", command=self._browse_ffmpeg).pack(side="left")
+        self.dl_btn = ttk.Button(ff_btns, text="Download", command=self.download_ffmpeg)
+        self.dl_btn.pack(side="left", padx=(4, 0))
+        add("FFmpeg path (optional)", ttk.Entry(f, textvariable=var("ffmpeg_path"), width=34), ff_btns)
+        add("Close button hides to tray", ttk.Checkbutton(f, variable=var("close_to_tray", tk.BooleanVar)))
 
         ttk.Separator(f).grid(row=row, column=0, columnspan=3, sticky="ew", pady=8); row += 1
         ttk.Label(f, text="Share links", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky="w"); row += 1
@@ -152,6 +157,50 @@ class App:
                 self.set_status(f"Found {len(mons)} monitor(s)." if mons else
                                 "No monitors found by Desktop Duplication (check ffmpeg.log).", error=not mons)
             self.ui_q.put(done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _offer_ffmpeg_download(self) -> None:
+        if messagebox.askyesno(
+            "FFmpeg needed",
+            "LCClips uses FFmpeg to capture and encode video.\n\n"
+            "Download it now? (about 150 MB, one time - it's saved to %APPDATA%\\LCClips\\bin)",
+            parent=self.root,
+        ):
+            self.download_ffmpeg()
+
+    def download_ffmpeg(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        self.dl_btn.state(["disabled"])
+        self.set_status("Downloading FFmpeg…")
+
+        def progress(frac: float):
+            self.ui_q.put(lambda: self.set_status(f"Downloading FFmpeg… {frac:.0%}"))
+
+        def worker():
+            try:
+                exe = ffmpeg_setup.install(progress)
+
+                def done():
+                    self.vars["ffmpeg_path"].set("")  # auto-detected from %APPDATA%\LCClips\bin
+                    self.ffmpeg = exe
+                    self.cfg.ffmpeg_path = ""
+                    self.cfg.save()
+                    self.set_status("FFmpeg installed. Starting capture…")
+                    self._busy = False
+                    self.restart()
+                self.ui_q.put(done)
+            except Exception as e:
+                log.exception("FFmpeg download failed")
+                err = str(e)
+                self.ui_q.put(lambda: self.set_status(
+                    f"FFmpeg download failed: {err}. You can download it manually (see README) and Browse to ffmpeg.exe.",
+                    error=True))
+            finally:
+                self._busy = False
+                self.ui_q.put(lambda: self.dl_btn.state(["!disabled"]))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -432,7 +481,8 @@ class App:
         try:
             import pystray
             from PIL import Image, ImageDraw
-        except Exception:
+        except Exception as e:
+            log.warning("Tray icon unavailable (%s); closing the window will exit", e)
             return
         img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
@@ -443,7 +493,8 @@ class App:
             pystray.MenuItem("Save clip", lambda: self.save_clip()),
             pystray.MenuItem("Share last clip", lambda: self.ui_q.put(self.share_last)),
             pystray.MenuItem("Open clips folder", lambda: capture.open_folder(self.cfg.output_dir)),
-            pystray.MenuItem("Quit", lambda: self.ui_q.put(self.quit)),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Close LCClips", lambda: self.ui_q.put(self.quit)),
         )
         self.tray = pystray.Icon(APP_NAME, img, APP_NAME, menu)
         self.tray.run_detached()
@@ -453,10 +504,16 @@ class App:
         self.root.lift()
 
     def on_close(self) -> None:
-        if self.tray:
-            self.root.withdraw()  # keep running in the tray
-        else:
+        close_to_tray = bool(self.vars["close_to_tray"].get()) if "close_to_tray" in self.vars else self.cfg.close_to_tray
+        if not (self.tray and close_to_tray):
             self.quit()
+            return
+        self.root.withdraw()  # keep recording in the background
+        if not self.cfg.tray_notice_shown:
+            self._notify("LCClips is still running. Right-click the tray icon and choose 'Close LCClips' to exit.",
+                         "Still running in the tray")
+            self.cfg.tray_notice_shown = True
+            self.cfg.save()
 
     def quit(self) -> None:
         if self.recorder:

@@ -51,7 +51,7 @@ def find_ffmpeg(configured: str = "") -> str | None:
         candidates.append(Path(configured))
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     exe = "ffmpeg.exe" if IS_WINDOWS else "ffmpeg"
-    candidates += [base / "bin" / exe, base / exe, Path(sys.executable).parent / "bin" / exe]
+    candidates += [APP_DIR / "bin" / exe, base / "bin" / exe, base / exe, Path(sys.executable).parent / "bin" / exe]
     for c in candidates:
         if c.is_file():
             return str(c)
