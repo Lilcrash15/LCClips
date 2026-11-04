@@ -136,7 +136,7 @@ def _toast_test() -> str:
     user32 = ctypes.windll.user32
     ps = ("Add-Type -AssemblyName System.Windows.Forms;"
           "$f=New-Object Windows.Forms.Form;$f.Text='LCClipsFakeGame';$f.FormBorderStyle='None';"
-          "$f.WindowState='Maximized';$f.TopMost=$true;$f.BackColor='Black';"
+          "$f.WindowState='Maximized';$f.TopMost=$true;$f.BackColor='DarkRed';"
           "$f.Add_Shown({$f.Activate()});[void]$f.ShowDialog()")
     game_proc = subprocess.Popen(["powershell", "-NoProfile", "-Command", ps], creationflags=0x08000000)
     try:
@@ -153,6 +153,10 @@ def _toast_test() -> str:
         root = tk.Tk()
         root.withdraw()  # like LCClips hidden in the tray
         ov = Overlay(root)
+        user32.GetAncestor.restype = ctypes.c_void_p
+        root_frame = user32.GetAncestor(ctypes.c_void_p(root.winfo_id()), 2)
+        if not ov.hwnd or ov.hwnd == root_frame:
+            raise RuntimeError("toast handle points at the main window, not the toast")
         GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = -20, 0x80, 0x40000
         ex = user32.GetWindowLongW(ctypes.c_void_p(ov.hwnd), GWL_EXSTYLE)
         if not ex & WS_EX_TOOLWINDOW or ex & WS_EX_APPWINDOW:
@@ -166,17 +170,24 @@ def _toast_test() -> str:
                 root.update()
                 time.sleep(0.02)
 
-        def pixel_at_toast():
+        def pixel(x: int, y: int):
             from PIL import ImageGrab
 
+            return ImageGrab.grab(bbox=(x, y, x + 1, y + 1), include_layered_windows=True).getpixel((0, 0))[:3]
+
+        def pixel_at_toast():
             x, y = ov._xy("Top right")
-            px = ImageGrab.grab(bbox=(x + 150, y + 30, x + 151, y + 31), include_layered_windows=True).getpixel((0, 0))
-            return sum(px[:3]) / 3
+            return pixel(x + 150, y + 30)
+
+        game_px = pixel(300, 300)
+        if not (game_px[0] > 80 and game_px[1] < 40):
+            raise RuntimeError(f"screenshots don't work on this machine (game pixel {game_px}) - can't verify")
+        before = pixel_at_toast()
 
         ov.show("Clip saved", "Self-test", "ok", "Top right", ms=1500)
         pump(0.6)
         visible = user32.IsWindowVisible(ctypes.c_void_p(ov.hwnd))
-        brightness = pixel_at_toast()
+        during = pixel_at_toast()
         user32.GetWindow.restype = ctypes.c_void_p
         h, above = ov.hwnd, False
         for _ in range(2000):  # walk down the z-order from the toast
@@ -195,11 +206,11 @@ def _toast_test() -> str:
             raise RuntimeError("toast window not visible")
         if not above:
             raise RuntimeError("toast is BELOW the game window")
-        if brightness < 12:
-            raise RuntimeError(f"toast not actually drawn on screen (pixel brightness {brightness:.0f})")
-        if not gone or after > 8:
-            raise RuntimeError("toast didn't disappear after its timeout")
-        return (f"on screen above the game (pixel {brightness:.0f} vs black game), no taskbar button, "
+        if during == before:
+            raise RuntimeError(f"toast not drawn on screen (pixel stayed {during}, game is {before})")
+        if not gone or after != before:
+            raise RuntimeError(f"toast didn't disappear after its timeout (pixel {after})")
+        return (f"drawn above the game (pixel {during} over red game {before}), no taskbar button, "
                 f"game kept focus: {fg == game}, gone after timeout")
     finally:
         game_proc.kill()

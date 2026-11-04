@@ -50,19 +50,22 @@ class Overlay:
         if IS_WINDOWS:
             try:
                 u = ctypes.windll.user32
-                self.hwnd = u.GetParent(w.winfo_id())
+                # GA_ROOT = the toast's own top-level window. (GetParent would return the
+                # *owner* for a popup - LCClips' main window - not the toast.)
+                u.GetAncestor.restype = ctypes.c_void_p
+                self.hwnd = u.GetAncestor(ctypes.c_void_p(w.winfo_id()), 2)
                 GWL_EXSTYLE, WS_EX_APPWINDOW = -20, 0x40000
-                ex = u.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+                ex = u.GetWindowLongW(ctypes.c_void_p(self.hwnd), GWL_EXSTYLE)
                 ex |= 0x80000 | 0x20 | 0x80 | 0x8000000 | 0x8  # LAYERED|TRANSPARENT|TOOLWINDOW|NOACTIVATE|TOPMOST
                 ex &= ~WS_EX_APPWINDOW
-                u.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex)
+                u.SetWindowLongW(ctypes.c_void_p(self.hwnd), GWL_EXSTYLE, ex)
                 # No owner window: otherwise hiding LCClips to the tray hides the toast too.
                 set_long = getattr(u, "SetWindowLongPtrW", u.SetWindowLongW)
                 set_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
                 set_long(self.hwnd, -8, None)  # GWLP_HWNDPARENT
                 # Windows decides on a taskbar button when a window is *shown*, so hide it now
                 # (with the tool-window style already set) - it never gets a taskbar button.
-                u.ShowWindow(self.hwnd, 0)  # SW_HIDE
+                u.ShowWindow(ctypes.c_void_p(self.hwnd), 0)  # SW_HIDE
             except Exception:
                 log.exception("toast setup failed")
                 self.hwnd = 0
@@ -94,14 +97,14 @@ class Overlay:
 
     def _really_hide(self) -> None:
         if self.hwnd:
-            ctypes.windll.user32.ShowWindow(self.hwnd, 0)  # SW_HIDE: gone completely, not just transparent
+            ctypes.windll.user32.ShowWindow(ctypes.c_void_p(self.hwnd), 0)  # SW_HIDE: gone completely, not just transparent
         else:
             self.win.withdraw()
 
     @property
     def visible(self) -> bool:
         if self.hwnd:
-            return bool(ctypes.windll.user32.IsWindowVisible(self.hwnd)) and self.alpha > 0
+            return bool(ctypes.windll.user32.IsWindowVisible(ctypes.c_void_p(self.hwnd))) and self.alpha > 0
         return self.win.winfo_viewable() and self.alpha > 0
 
     # ------------------------------------------------------------------ internals
@@ -115,10 +118,10 @@ class Overlay:
         if self.hwnd:
             u = ctypes.windll.user32
             HWND_TOPMOST, SWP_NOSIZE, SWP_NOACTIVATE, SWP_SHOWWINDOW = -1, 0x1, 0x10, 0x40
-            u.SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, 0, 0,
+            u.SetWindowPos(ctypes.c_void_p(self.hwnd), ctypes.c_void_p(HWND_TOPMOST), x, y, 0, 0,
                            SWP_NOSIZE | SWP_NOACTIVATE | (SWP_SHOWWINDOW if show else 0))
             if show:
-                u.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE
+                u.ShowWindow(ctypes.c_void_p(self.hwnd), 4)  # SW_SHOWNOACTIVATE
         else:
             self.win.geometry(f"+{x}+{y}")
             if show:
