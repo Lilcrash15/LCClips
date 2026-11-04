@@ -704,20 +704,78 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _confirm_delete(self, clip: library.Clip, shared: bool) -> tuple[bool, bool]:
+        """Themed 'Delete clip' dialog. Returns (delete, also_from_cloud)."""
+        win = tk.Toplevel(self.root)
+        win.title("Delete clip")
+        win.configure(bg=theme.BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        self._apply_titlebar(win)
+        f = ttk.Frame(win, padding=18)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text="Delete this clip?", style="Heading.TLabel").pack(anchor="w")
+        ttk.Label(f, text=f"{clip.path.name} will be moved to the Recycle Bin.", wraplength=380,
+                  justify="left").pack(anchor="w", pady=(6, 0))
+        cloud = tk.BooleanVar(value=shared)
+        if shared:
+            ttk.Checkbutton(f, text="Also delete it from your share server (the link stops working)",
+                            variable=cloud).pack(anchor="w", pady=(12, 0))
+            ttk.Label(f, text="Untick to keep the share link working.", style="Muted.TLabel").pack(anchor="w",
+                                                                                                padx=(24, 0))
+        result = {"ok": False}
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", pady=(16, 0))
+
+        def done(ok: bool):
+            result["ok"] = ok
+            win.destroy()
+
+        ttk.Button(btns, text="Delete", style="Accent.TButton", command=lambda: done(True)).pack(side="right")
+        ttk.Button(btns, text="Cancel", command=lambda: done(False)).pack(side="right", padx=(0, 6))
+        win.bind("<Escape>", lambda e: done(False))
+        win.bind("<Return>", lambda e: done(True))
+        win.protocol("WM_DELETE_WINDOW", lambda: done(False))
+        win.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - win.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - win.winfo_height()) // 3
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        win.grab_set()
+        win.focus_force()
+        self.root.wait_window(win)
+        return result["ok"], result["ok"] and shared and cloud.get()
+
     def delete_selected(self) -> None:
         c = self._selected_clip()
         if not c:
             return
-        extra = "\n\nIts share link will keep working until you remove it." if self._upload_for(c) else ""
-        if not messagebox.askyesno("Delete clip", f"Move '{c.path.name}' to the Recycle Bin?{extra}", parent=self.root):
+        up = self._upload_for(c)
+        ok, from_cloud = self._confirm_delete(c, shared=up is not None)
+        if not ok:
             return
         try:
             recycled = library.send_to_recycle_bin(c.path)
             self.library.forget(c)
             self.selected = None
-            self.set_status(f"Moved {c.path.name} to the Recycle Bin." if recycled else f"Deleted {c.path.name}.", "ok")
+            msg = f"Moved {c.path.name} to the Recycle Bin." if recycled else f"Deleted {c.path.name}."
+            self.set_status(msg + (" Removing it from your share server…" if from_cloud else ""), "ok")
         except OSError as e:
             self.set_status(f"Couldn't delete: {e}", "error")
+            from_cloud = False
+        if from_cloud and up:
+            cfg = self.cfg
+
+            def worker():
+                try:
+                    share.delete_upload(share.ShareClient(cfg.share_server_url, cfg.share_token), up)
+                    self.ui_q.put(lambda: (self.set_status(f"Deleted {c.path.name} and its share link.", "ok"),
+                                           self.refresh_clips()))
+                except Exception as e:
+                    err = str(e)
+                    self.ui_q.put(lambda: self.set_status(
+                        f"Deleted the clip, but couldn't remove it from your share server: {err}", "error"))
+
+            threading.Thread(target=worker, daemon=True).start()
         self.refresh_clips()
 
     def unshare_selected(self) -> None:
@@ -1266,6 +1324,9 @@ class App:
 
     # ------------------------------------------------------------------ loops
     def _pump(self) -> None:
+        # Re-arm first: a callback may open a modal dialog (wait_window), and UI
+        # updates must keep flowing while it's open.
+        self.root.after(POLL_MS, self._pump)
         while True:
             try:
                 fn = self.ui_q.get_nowait()
@@ -1275,7 +1336,6 @@ class App:
                 fn()
             except Exception:
                 log.exception("UI callback failed")
-        self.root.after(POLL_MS, self._pump)
 
     def _watchdog(self) -> None:
         rec = self.recorder

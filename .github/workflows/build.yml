@@ -6,6 +6,11 @@ on:
   release:
     types: [published]  # publishing a release on GitHub builds + attaches the installer
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Replace the installer on this existing release (e.g. v0.4.2). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write  # needed to publish releases on tags
@@ -29,6 +34,14 @@ jobs:
         run: |
           if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
 
+      - name: Check version matches the release
+        if: github.event_name == 'release' || inputs.release_tag != ''
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.release_tag || github.event.release.tag_name }}".TrimStart("v")
+          $ver = python -c "import lcclips; print(lcclips.__version__)"
+          if ($tag -ne $ver) { Write-Error "Release is v$tag but the code is version $ver"; exit 1 }
+
       - name: Build app + installer (includes packaged self-test)
         run: python packaging/build.py
 
@@ -40,8 +53,8 @@ jobs:
           if-no-files-found: error
 
       - name: Attach installer to release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.event.release.tag_name }}
           files: dist/LCClips-Setup-*.exe
-          generate_release_notes: true
