@@ -16,6 +16,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import datetime as _dt  # noqa: E402
+import json as _json  # noqa: E402
+import os as _os  # noqa: E402
+
 from lcclips import __version__, ffmpeg_setup  # noqa: E402
 from lcclips.gui.icon import write_ico  # noqa: E402
 
@@ -56,6 +60,15 @@ def main() -> None:
     print(f"Building LCClips {__version__}")
     BUILD.mkdir(exist_ok=True)
     shutil.rmtree(DIST / "LCClips", ignore_errors=True)
+
+    # Build ID: lets the app (and its updater) tell two builds of the same version apart.
+    sha = _os.environ.get("GITHUB_SHA", "")[:7] or subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip() or "local"
+    build_id = f"{sha}-{_dt.datetime.now(_dt.timezone.utc):%Y%m%d%H%M}"
+    (ROOT / "lcclips" / "_build.py").write_text(f'BUILD = "{build_id}"\n', encoding="utf-8")
+    DIST.mkdir(exist_ok=True)
+    (DIST / "LCClips-build.json").write_text(_json.dumps({"version": __version__, "build": build_id}), encoding="utf-8")
+    print(f"Build ID {build_id}")
 
     ico = write_ico(BUILD / "icon.ico")
     ffmpeg = BUILD / "bin" / "ffmpeg.exe"

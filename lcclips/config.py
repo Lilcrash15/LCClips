@@ -49,6 +49,7 @@ class Config:
     share_server_url: str = ""
     share_token: str = ""
     auto_upload: bool = False
+    delete_from_cloud: bool = True  # deleting a shared clip also removes it from the share server
     share_expire_days: int = 30  # matches the R2 lifecycle rule; 0 = links never expire
     upload_bitrate_mbps: int = 8  # re-encode for upload; 0 = upload the original file
 

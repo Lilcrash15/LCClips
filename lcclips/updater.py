@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import __version__
+from . import BUILD, __version__
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class UpdateInfo:
     asset_name: str
     size: int
     sha256: str | None  # GitHub's asset digest, when available
+    rebuild: bool = False  # same version number, newer build (release re-published)
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -48,7 +49,20 @@ def parse_version(text: str) -> tuple[int, ...]:
     return tuple(int(g) for g in m.groups() if g is not None) if m else (0,)
 
 
-def check(current: str = __version__, timeout: float = 10.0) -> UpdateInfo | None:
+def _release_build(data: dict, timeout: float) -> str | None:
+    """Build ID published next to the installer (LCClips-build.json), if any."""
+    a = next((a for a in data.get("assets", []) if a.get("name") == "LCClips-build.json"), None)
+    if not a:
+        return None
+    try:
+        req = urllib.request.Request(a["browser_download_url"], headers={"User-Agent": _HEADERS["User-Agent"]})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return str(json.load(r).get("build") or "") or None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def check(current: str = __version__, timeout: float = 10.0, build: str = BUILD) -> UpdateInfo | None:
     """Newer release with an installer attached, or None if up to date.
     Raises UpdateError when the check itself fails (callers decide whether to show it)."""
     try:
@@ -61,8 +75,15 @@ def check(current: str = __version__, timeout: float = 10.0) -> UpdateInfo | Non
         raise UpdateError(f"Couldn't reach GitHub ({getattr(e, 'reason', e)})") from None
 
     tag = data.get("tag_name") or ""
-    if parse_version(tag) <= parse_version(current):
+    rebuild = False
+    if parse_version(tag) < parse_version(current):
         return None
+    if parse_version(tag) == parse_version(current):
+        # Same version: only an update if the release was re-published with a different build.
+        remote = _release_build(data, timeout)
+        if build == "dev" or not remote or remote == build:
+            return None
+        rebuild = True
     asset = next((a for a in data.get("assets", []) if _ASSET_RE.match(a.get("name", ""))), None)
     if not asset:
         # Release published but the build hasn't attached the installer yet.
@@ -76,6 +97,7 @@ def check(current: str = __version__, timeout: float = 10.0) -> UpdateInfo | Non
         asset_name=asset["name"],
         size=int(asset.get("size") or 0),
         sha256=digest.split(":", 1)[1].lower() if digest.startswith("sha256:") else None,
+        rebuild=rebuild,
     )
 
 

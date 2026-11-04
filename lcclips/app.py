@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, audio, capture, ffmpeg_setup, hotkeys, library, share, updater, winapp
+from . import BUILD, __version__, audio, capture, ffmpeg_setup, hotkeys, library, share, updater, winapp
 from .config import APP_DIR, APP_NAME, DEVICE_DEFAULT, DEVICE_NONE, ENCODERS, RESOLUTIONS, Config
 from .editor import Editor
 from .gui import theme
@@ -195,7 +195,8 @@ class App:
 
     def _show_about(self) -> None:
         messagebox.showinfo(f"About {APP_NAME}",
-                            f"{APP_NAME} v{__version__}\n\nLightweight GPU game clipping.\n{REPO_URL}", parent=self.root)
+                            f"{APP_NAME} v{__version__}\nBuild {BUILD}\n\nLightweight GPU game clipping.\n{REPO_URL}",
+                            parent=self.root)
 
     # ================================================================== layout
     def _build_ui(self) -> None:
@@ -511,7 +512,8 @@ class App:
             def done():
                 self._update_info = info
                 if info:
-                    self.update_label.configure(text=f"⬆ Update available: {info.version}")
+                    self.update_label.configure(text=f"⬆ Update available: {info.version}"
+                                                + (" (new build)" if info.rebuild else ""))
                     if manual:
                         self.show_update_dialog()
                     else:
@@ -537,7 +539,8 @@ class App:
         self._apply_titlebar(win)
         f = ttk.Frame(win, padding=18)
         f.pack(fill="both", expand=True)
-        ttk.Label(f, text=f"LCClips {info.version} is available", style="Heading.TLabel").pack(anchor="w")
+        ttk.Label(f, text=(f"An updated build of LCClips {info.version} is available" if info.rebuild
+                           else f"LCClips {info.version} is available"), style="Heading.TLabel").pack(anchor="w")
         ttk.Label(f, text=f"You have v{__version__}  ·  download {info.size / 1e6:.0f} MB",
                   style="Muted.TLabel").pack(anchor="w", pady=(2, 10))
         notes = tk.Text(f, width=70, height=14, wrap="word", relief="flat", bg=theme.PANEL_BG, fg=theme.FG,
@@ -717,18 +720,24 @@ class App:
         ttk.Label(f, text="Delete this clip?", style="Heading.TLabel").pack(anchor="w")
         ttk.Label(f, text=f"{clip.path.name} will be moved to the Recycle Bin.", wraplength=380,
                   justify="left").pack(anchor="w", pady=(6, 0))
-        cloud = tk.BooleanVar(value=shared)
+        cloud = tk.BooleanVar(value=shared and self.cfg.delete_from_cloud)
         if shared:
             ttk.Checkbutton(f, text="Also delete it from your share server (the link stops working)",
                             variable=cloud).pack(anchor="w", pady=(12, 0))
-            ttk.Label(f, text="Untick to keep the share link working.", style="Muted.TLabel").pack(anchor="w",
-                                                                                                padx=(24, 0))
+            remember = tk.BooleanVar(value=False)
+            ttk.Checkbutton(f, text="Remember this choice (Settings → Share links)",
+                            variable=remember).pack(anchor="w", pady=(4, 0))
         result = {"ok": False}
         btns = ttk.Frame(f)
         btns.pack(fill="x", pady=(16, 0))
 
         def done(ok: bool):
             result["ok"] = ok
+            if ok and shared and remember.get() and cloud.get() != self.cfg.delete_from_cloud:
+                self.cfg.delete_from_cloud = cloud.get()
+                self.cfg.save()
+                if "delete_from_cloud" in self.vars:
+                    self.vars["delete_from_cloud"].set(cloud.get())
             win.destroy()
 
         ttk.Button(btns, text="Delete", style="Accent.TButton", command=lambda: done(True)).pack(side="right")
@@ -914,6 +923,8 @@ class App:
         add(sh, "Auto-upload new clips", ttk.Checkbutton(sh, variable=var("auto_upload", tk.BooleanVar)))
         add(sh, "Upload bitrate (0 = original)", ttk.Spinbox(sh, from_=0, to=50, increment=1,
                                                              textvariable=var("upload_bitrate_mbps", tk.IntVar), width=8))
+        add(sh, "Deleting a clip also deletes its link",
+            ttk.Checkbutton(sh, variable=var("delete_from_cloud", tk.BooleanVar)))
         add(sh, "Delete shared clips after (days)", ttk.Spinbox(sh, from_=0, to=365, increment=1,
                                                                 textvariable=var("share_expire_days", tk.IntVar), width=8))
         ttk.Label(sh, text="Removes them from your share server to stay under the free 10 GB. 0 = keep forever. "

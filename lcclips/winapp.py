@@ -402,7 +402,11 @@ def selftest(report: Path) -> int:
 
     from . import __version__
 
-    lines.append(f"LCClips {__version__} frozen={IS_FROZEN}")
+    from . import BUILD
+
+    lines.append(f"LCClips {__version__} build {BUILD} frozen={IS_FROZEN}")
+    check("build id", lambda: BUILD if BUILD != "dev" or not IS_FROZEN else (_ for _ in ()).throw(
+        RuntimeError("installer is missing its build ID")))
     check("numpy", lambda: __import__("numpy").__version__)
     check("PIL", lambda: __import__("PIL").__version__)
     check("tkinter", lambda: __import__("tkinter").TkVersion)
