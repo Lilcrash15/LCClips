@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Replace the installer on this existing release (e.g. v0.4.2). Leave empty to only build."
+        description: "Release to replace the installer on (e.g. v0.4.2). Empty = the release matching the app version."
         required: false
         default: ""
 
@@ -34,13 +34,26 @@ jobs:
         run: |
           if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
 
-      - name: Check version matches the release
-        if: github.event_name == 'release' || inputs.release_tag != ''
+      - name: Pick the release to attach to
+        id: target
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ inputs.release_tag || github.event.release.tag_name }}".TrimStart("v")
           $ver = python -c "import lcclips; print(lcclips.__version__)"
-          if ($tag -ne $ver) { Write-Error "Release is v$tag but the code is version $ver"; exit 1 }
+          $tag = "${{ inputs.release_tag || github.event.release.tag_name }}"
+          if (-not $tag) { $tag = "v$ver" }   # Run workflow with the box empty -> release matching the app version
+          if ($tag.TrimStart("v") -ne $ver) { Write-Error "Release $tag doesn't match the app version $ver"; exit 1 }
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            if ("${{ github.event_name }}" -eq "workflow_dispatch" -and -not "${{ inputs.release_tag }}") {
+              Write-Host "No release $tag yet - building only."; "tag=" >> $env:GITHUB_OUTPUT; exit 0
+            }
+            Write-Error "Release $tag not found"; exit 1
+          }
+          Write-Host "Will attach to release $tag"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Build app + installer (includes packaged self-test)
         run: python packaging/build.py
@@ -53,10 +66,10 @@ jobs:
           if-no-files-found: error
 
       - name: Attach installer to release
-        if: github.event_name == 'release' || inputs.release_tag != ''
+        if: steps.target.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag || github.event.release.tag_name }}
+          tag_name: ${{ steps.target.outputs.tag }}
           files: |
             dist/LCClips-Setup-*.exe
             dist/LCClips-build.json
