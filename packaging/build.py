@@ -69,6 +69,12 @@ def main() -> None:
     DIST.mkdir(exist_ok=True)
     (DIST / "LCClips-build.json").write_text(_json.dumps({"version": __version__, "build": build_id}), encoding="utf-8")
     print(f"Build ID {build_id}")
+    (DIST / "THIRD_PARTY_NOTICES.txt").write_text(
+        "LCClips includes FFmpeg (https://ffmpeg.org), a static GPL build from\n"
+        "https://github.com/BtbN/FFmpeg-Builds, licensed under the GNU GPL version 3.\n"
+        "FFmpeg's source code is available at https://ffmpeg.org/download.html and the exact\n"
+        "build scripts at https://github.com/BtbN/FFmpeg-Builds. ffmpeg.exe is a separate\n"
+        "program that LCClips runs; it is not modified.\n", encoding="utf-8")
 
     ico = write_ico(BUILD / "icon.ico")
     ffmpeg = BUILD / "bin" / "ffmpeg.exe"
@@ -87,6 +93,7 @@ def main() -> None:
          "--name", "LCClips", "--icon", str(ico), "--version-file", str(vfile),
          "--add-binary", f"{ffmpeg};bin",
          "--add-data", f"{ROOT / 'lcclips' / 'editor' / 'ui'};lcclips/editor/ui",
+         "--add-data", f"{ROOT / 'server' / 'src' / 'worker.js'};lcclips",
          "--collect-data", "soundcard", "--hidden-import", "pystray._win32",
          "--distpath", str(DIST), "--workpath", str(BUILD / "pyi"), "--specpath", str(BUILD),
          str(ROOT / "launcher.py")])

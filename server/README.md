@@ -2,7 +2,9 @@
 
 This is a single Cloudflare Worker backed by an R2 bucket. LCClips uploads a clip to it and gets back a link like `https://lcclips.<you>.workers.dev/c/k3J9xQmP`. The link opens a player page, and Discord, X and iMessage show the video playing inline.
 
-## One-time setup (about 5 minutes)
+**Most people don't need this page.** In LCClips, choose **Help → Set up share links…** and the wizard does all of this for you, with no Node.js or scripts. The steps below are the manual, advanced alternative.
+
+## Manual setup (advanced)
 
 You need **Node.js LTS** (from nodejs.org) and a free **Cloudflare account**.
 

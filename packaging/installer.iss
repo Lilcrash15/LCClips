@@ -43,6 +43,7 @@ Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 Source: "{#Root}\dist\LCClips\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#Root}\dist\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\server\*"; DestDir: "{app}\server"; Excludes: "node_modules,.wrangler,.dev.vars"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

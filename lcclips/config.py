@@ -38,6 +38,7 @@ class Config:
     audio_offset_ms: int = 0  # +delays audio, -advances it
     output_dir: str = field(default_factory=_default_clips_dir)
     ffmpeg_path: str = ""  # empty = auto-detect
+    first_run_done: bool = False  # welcome screen shown
     check_updates: bool = True  # check GitHub Releases at startup and every few hours
     theme: str = "classic"  # LC-line theme preset (see gui/theme.py)
     overlay_enabled: bool = True  # small on-screen "Clip saved" toast
@@ -58,6 +59,7 @@ class Config:
         cfg = cls()
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+            data.setdefault("first_run_done", True)  # existing installs skip the welcome screen
             known = {f.name: f.type for f in fields(cls)}
             for k, v in data.items():
                 if k in known:

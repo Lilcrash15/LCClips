@@ -21,6 +21,7 @@ from .editor import Editor
 from .gui import theme
 from .gui.icon import make_icon
 from .gui.overlay import POSITIONS, Overlay
+from .gui.share_wizard import ShareWizard
 
 log = logging.getLogger(APP_NAME)
 
@@ -178,7 +179,8 @@ class App:
         self.help_menu = tk.Menu(self.root, tearoff=0, **theme.popup_menu_kwargs())
         self.help_menu.add_command(label="Check for updates", command=lambda: self.check_for_updates(manual=True))
         self.help_menu.add_command(label="About", command=self._show_about)
-        self.help_menu.add_command(label="Set up share links…", command=self._open_server_folder)
+        self.help_menu.add_command(label="Set up share links…", command=self.open_share_wizard)
+        self.help_menu.add_command(label="Show welcome screen", command=self.show_welcome)
         self.help_menu.add_command(label="Open logs folder", command=lambda: capture.open_folder(str(APP_DIR)))
         self.help_menu.add_command(label="LCClips on GitHub", command=lambda: webbrowser.open(REPO_URL))
         ttk.Menubutton(bar, text="Help", menu=self.help_menu, style="Toolbar.TMenubutton").pack(side="left", padx=(2, 0), pady=2)
@@ -919,6 +921,8 @@ class App:
         add(aud, "Clip sounds", ttk.Checkbutton(aud, variable=var("sounds", tk.BooleanVar)))
 
         sh = section("Share links", 1, 1)
+        add(sh, "Set up automatically", ttk.Button(sh, text="Open setup wizard…", style="Accent.TButton",
+                                                   command=self.open_share_wizard))
         add(sh, "Server URL", ttk.Entry(sh, textvariable=var("share_server_url")),
             ttk.Button(sh, text="Test", command=self.test_share))
         add(sh, "Upload key", ttk.Entry(sh, textvariable=var("share_token"), show="•"))
@@ -1317,8 +1321,8 @@ class App:
             return
         cfg = self._collect()
         if not cfg.share_server_url or not cfg.share_token:
-            self.notebook.select(self.settings_tab)
-            self.set_status("Set the share server URL and upload key first (run server\\setup.bat).", "error")
+            self.set_status("Share links aren't set up yet - the setup wizard will walk you through it.")
+            self.open_share_wizard()
             return
         self._sharing.add(key)
         self._update_details()
@@ -1449,8 +1453,104 @@ class App:
             self.tray.stop()
         self.root.destroy()
 
+    # ------------------------------------------------------------------ wizards
+    def open_share_wizard(self) -> None:
+        self.show()
+
+        def done(url: str, key: str):
+            # Called from the wizard (UI thread) once the server is deployed.
+            self.cfg.share_server_url, self.cfg.share_token = url, key
+            self.cfg.save()
+            for k, v in (("share_server_url", url), ("share_token", key)):
+                if k in self.vars:
+                    self.vars[k].set(v)
+            self._update_dirty()
+            self.set_status(f"✔ Share links set up: {url}", "ok")
+
+        ShareWizard(self.root, done, self._apply_titlebar)
+
+    def show_welcome(self) -> None:
+        """First-launch setup: the few settings that matter, and optional share links."""
+        self.show()
+        win = tk.Toplevel(self.root)
+        win.title("Welcome to LCClips")
+        win.configure(bg=theme.BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        self._apply_titlebar(win)
+        f = ttk.Frame(win, padding=(22, 18, 22, 16))
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text="Welcome to LCClips", style="Heading.TLabel", font=(theme.FONT, 14, "bold")).pack(anchor="w")
+        ttk.Label(f, text="LCClips keeps the last few seconds of your game ready. Press your hotkey after "
+                          "something good happens and it's saved as a clip.", wraplength=460,
+                  justify="left").pack(anchor="w", pady=(6, 12))
+        box = ttk.Frame(f)
+        box.pack(fill="x")
+        box.columnconfigure(1, weight=1)
+        hk = tk.StringVar(value=self.cfg.hotkey)
+        secs = tk.IntVar(value=self.cfg.clip_seconds)
+        folder = tk.StringVar(value=self.cfg.output_dir)
+        pos = tk.StringVar(value=self.cfg.overlay_position)
+        share_next = tk.BooleanVar(value=False)
+
+        def row(r, label, widget, extra=None):
+            ttk.Label(box, text=label).grid(row=r, column=0, sticky="w", pady=4, padx=(0, 12))
+            widget.grid(row=r, column=1, sticky="ew", pady=4)
+            if extra:
+                extra.grid(row=r, column=2, padx=(6, 0))
+
+        def record():
+            try:
+                import keyboard
+            except Exception:
+                return
+            hk.set("Press your hotkey…")
+            threading.Thread(target=lambda: (lambda k: self.ui_q.put(lambda: hk.set(k)))(
+                keyboard.read_hotkey(suppress=False)), daemon=True).start()
+
+        row(0, "Save-clip hotkey", ttk.Entry(box, textvariable=hk), ttk.Button(box, text="Record…", command=record))
+        row(1, "Clip length (seconds)", ttk.Spinbox(box, from_=5, to=600, increment=5, textvariable=secs, width=8))
+        row(2, "Save clips to", ttk.Entry(box, textvariable=folder),
+            ttk.Button(box, text="Browse…", command=lambda: folder.set(
+                filedialog.askdirectory(initialdir=folder.get(), parent=win) or folder.get())))
+        row(3, "\"Clip saved\" alert", ttk.Combobox(box, values=POSITIONS, textvariable=pos, state="readonly"))
+        ttk.Label(f, text="Works with Stream Deck too: give a Hotkey action the same keys.", style="Muted.TLabel"
+                  ).pack(anchor="w", pady=(6, 0))
+        ttk.Separator(f).pack(fill="x", pady=12)
+        ttk.Checkbutton(f, text="Set up share links next (optional, about 5 minutes, free)",
+                        variable=share_next).pack(anchor="w")
+        ttk.Label(f, text="Send clips as links that play in Discord. You can do this any time from "
+                          "Help → Set up share links.", style="Muted.TLabel", wraplength=460,
+                  justify="left").pack(anchor="w", padx=(24, 0))
+
+        def start():
+            for k, v in (("hotkey", hk.get().strip() or "alt+f10"), ("output_dir", folder.get()),
+                         ("overlay_position", pos.get())):
+                self.vars[k].set(v)
+            try:
+                self.vars["clip_seconds"].set(int(secs.get()))
+            except (tk.TclError, ValueError):
+                pass
+            self.cfg.first_run_done = True
+            self.apply()
+            win.destroy()
+            if share_next.get():
+                self.root.after(300, self.open_share_wizard)
+
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", pady=(16, 0))
+        ttk.Button(bar, text="Start using LCClips", style="Accent.TButton", command=start).pack(side="right")
+        win.protocol("WM_DELETE_WINDOW", start)
+        win.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - win.winfo_width()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - win.winfo_height()) // 3)
+        win.geometry(f"+{x}+{y}")
+        win.focus_force()
+
     def run(self) -> None:
-        if "--minimized" in sys.argv and self.tray:
+        if not self.cfg.first_run_done:
+            self.root.after(600, self.show_welcome)
+        elif "--minimized" in sys.argv and self.tray:
             self.root.withdraw()
         self.root.mainloop()
 

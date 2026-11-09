@@ -23,6 +23,10 @@ FFmpeg runs at *below-normal* process priority so the game always wins.
    It adds a Start Menu shortcut, and optionally a desktop shortcut and Start with Windows.
 3. Open **LCClips** from the Start Menu. FFmpeg is already included.
 
+On first launch, a short **welcome screen** sets your hotkey, clip length, clips folder and alert position. That's all you need: clips record and save on your PC with **no account or extra setup**.
+
+**Share links are optional.** When you first click **Share**, or choose **Help → Set up share links…**, a wizard walks you through it in about 5 minutes. You'll need a free Cloudflare account. You turn on R2 storage, create an API token (a button opens the right page) and paste it in. LCClips then creates your storage, uploads its share server and sets up your link address by itself, with no Node.js or scripts. Everyone uses their own free Cloudflare account.
+
 Windows SmartScreen may say "Windows protected your PC", because the installer isn't code-signed. Click **More info → Run anyway**.
 
 **Updates:** LCClips checks GitHub for new releases when it starts and every few hours. When one is available, a **⬆ Update available** link appears in the top bar. Click it, then **Update now**: LCClips downloads the new installer, checks it isn't corrupted, installs it and reopens. You can also use **Help → Check for updates**, and turn off automatic checks in Settings.

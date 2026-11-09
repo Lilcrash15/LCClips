@@ -478,6 +478,8 @@ def selftest(report: Path) -> int:
 
     check("recording pipeline", lambda: _pipeline_test(ff))
     check("LC Editor", lambda: _editor_test(ff))
+    check("share-server code bundled (setup wizard)",
+          lambda: f"{len(__import__('lcclips.cloud_setup', fromlist=['x']).worker_source())} bytes")
     check("frozen-capture detection", lambda: _freeze_test(ff))
     if IS_WINDOWS:
         check("fresh screen look (ddagrab)", lambda: _live_look_test(ff), required=False)
