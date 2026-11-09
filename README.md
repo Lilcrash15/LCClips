@@ -132,3 +132,11 @@ server/             Cloudflare Worker + R2 share server, one-click setup
 - Per-application audio (game only, without Discord or music) using the Windows process-loopback API.
 - Separate audio tracks for game and mic.
 - HEVC/AV1 output and a trim/preview window.
+
+## License
+
+LCClips is free and open source under the [MIT License](LICENSE): you're free to use, copy, modify and share it,
+as long as the copyright notice stays with it.
+
+The installer also bundles `ffmpeg.exe` from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). FFmpeg is a
+separate program under its own license (GNU GPL v3), not the MIT License.
