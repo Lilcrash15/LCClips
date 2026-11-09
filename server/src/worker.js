@@ -111,11 +111,21 @@ async function route(request, env) {
 
 // ---------------------------------------------------------------- helpers
 
+// One upload key per computer: secrets named UPLOAD_TOKEN or UPLOAD_TOKEN_<id>.
+// (The LCClips setup wizard adds a key for each PC and keeps the others.)
+function uploadTokens(env) {
+  return Object.entries(env)
+    .filter(([k, v]) => /^UPLOAD_TOKEN(_\w+)?$/.test(k) && typeof v === "string" && v.length >= 16)
+    .map(([, v]) => v);
+}
+
 function auth(request, env) {
-  const want = env.UPLOAD_TOKEN;
-  if (!want) throw new HttpError(500, "UPLOAD_TOKEN secret is not set on the worker");
+  const tokens = uploadTokens(env);
+  if (!tokens.length) throw new HttpError(500, "no UPLOAD_TOKEN secret is set on the worker");
   const got = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-  if (!timingSafeEqual(got, want)) throw new HttpError(401, "bad upload token");
+  let ok = false;
+  for (const t of tokens) ok = timingSafeEqual(got, t) || ok; // check all, no early exit
+  if (!ok) throw new HttpError(401, "bad upload token");
 }
 
 function timingSafeEqual(a, b) {

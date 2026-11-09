@@ -132,14 +132,16 @@ class Cloudflare:
         # 10004: "the bucket you tried to create already exists, and you own it" - fine (keeps clips).
         self._req("POST", f"/accounts/{acct}/r2/buckets", {"name": BUCKET}, ok_codes=(10004,))
 
-    def deploy_worker(self, acct: str, upload_token: str) -> None:
+    def deploy_worker(self, acct: str, upload_token: str, key_name: str) -> None:
         meta = {
             "main_module": "worker.js",
             "compatibility_date": COMPAT_DATE,
+            # Keep the upload keys of other computers already set up on this server.
+            "keep_bindings": ["secret_text"],
             "bindings": [
                 {"type": "r2_bucket", "name": "CLIPS", "bucket_name": BUCKET},
                 {"type": "plain_text", "name": "SITE_NAME", "text": "LCClips"},
-                {"type": "secret_text", "name": "UPLOAD_TOKEN", "text": upload_token},
+                {"type": "secret_text", "name": key_name, "text": upload_token},
             ],
         }
         boundary = "----LCClips" + secrets.token_hex(12)
@@ -198,7 +200,8 @@ def setup(cf: Cloudflare, account: Account, subdomain: str | None,
         sub = cf.create_subdomain(account.id, subdomain)
     upload_token = secrets.token_urlsafe(32)
     progress("Uploading your share server")
-    cf.deploy_worker(account.id, upload_token)
+    # Each computer gets its own key (UPLOAD_TOKEN_<id>); other computers' keys are kept.
+    cf.deploy_worker(account.id, upload_token, f"UPLOAD_TOKEN_{secrets.token_hex(4).upper()}")
     progress("Turning on its web address")
     cf.enable_workers_dev(account.id)
     url = f"https://{SCRIPT}.{sub}.workers.dev"

@@ -274,6 +274,8 @@ class ShareWizard:
         else:
             self._text("It's set up, but brand-new addresses can take a few minutes to come online. "
                        "LCClips is already configured - try Share in a few minutes.", "Muted.TLabel")
+        self._text("Using LCClips on more than one PC? Run this wizard on each one with the same Cloudflare "
+                   "account - every PC gets its own key and they all keep working.", "Muted.TLabel")
         self._text("Shared clips are deleted from your server after 30 days (change it in Settings).",
                    "Muted.TLabel")
         self.next_btn.configure(text="Finish", command=self.win.destroy)

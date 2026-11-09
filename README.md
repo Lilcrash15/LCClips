@@ -25,7 +25,7 @@ FFmpeg runs at *below-normal* process priority so the game always wins.
 
 On first launch, a short **welcome screen** sets your hotkey, clip length, clips folder and alert position. That's all you need: clips record and save on your PC with **no account or extra setup**.
 
-**Share links are optional.** When you first click **Share**, or choose **Help → Set up share links…**, a wizard walks you through it in about 5 minutes. You'll need a free Cloudflare account. You turn on R2 storage, create an API token (a button opens the right page) and paste it in. LCClips then creates your storage, uploads its share server and sets up your link address by itself, with no Node.js or scripts. Everyone uses their own free Cloudflare account.
+**Share links are optional.** When you first click **Share**, or choose **Help → Set up share links…**, a wizard walks you through it in about 5 minutes. You'll need a free Cloudflare account. You turn on R2 storage, create an API token (a button opens the right page) and paste it in. LCClips then creates your storage, uploads its share server and sets up your link address by itself, with no Node.js or scripts. Everyone uses their own free Cloudflare account. To use LCClips on several PCs, run the wizard on each one with the same Cloudflare account. Each PC gets its own upload key, and all of them keep working.
 
 Windows SmartScreen may say "Windows protected your PC", because the installer isn't code-signed. Click **More info → Run anyway**.
 
