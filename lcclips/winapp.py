@@ -333,6 +333,43 @@ def _editor_test(ffmpeg: str) -> str:
         return f"opened {info['width']}x{info['height']} {info['duration']:.0f}s; " + ", ".join(results)
 
 
+def _freeze_test(ffmpeg: str) -> str:
+    """A frozen recording while the screen shows something else must be reported;
+    a genuinely static screen must not."""
+    import time
+
+    from . import audio, capture
+    from .config import Config
+
+    audio.build_sources = lambda *a: []  # no audio devices needed for this
+    src = capture._small_gray(ffmpeg, ["-f", "lavfi", "-i", "color=c=red:size=640x360"])
+    other = capture._small_gray(ffmpeg, ["-f", "lavfi", "-i", "color=c=blue:size=640x360"])
+    results = []
+    for label, live in (("frozen", lambda: other), ("static screen", lambda: src)):
+        cfg = Config(clip_seconds=5, fps=30, encoder="libx264", bitrate_mbps=4)
+        plan = capture.VideoPlan("libx264", "color=c=red:size=640x360:rate=30,format=nv12",
+                                 capture._encoder_args("libx264", 30, 4), 640, 360, False)
+        rec = capture.Recorder(cfg, ffmpeg, plan)
+        rec.start()
+        fired = []
+        rec.start_freeze_watch(fired.append, live_probe=live, interval=1.0, still_after=3.0)
+        time.sleep(10)
+        rec.stop()
+        results.append((label, bool(fired)))
+    if results != [("frozen", True), ("static screen", False)]:
+        raise RuntimeError(f"unexpected: {results}")
+    return "frozen capture detected; static screen left alone"
+
+
+def _live_look_test(ffmpeg: str) -> str:
+    from . import capture
+
+    t = capture.live_thumb(ffmpeg, 0)
+    if not t:
+        raise RuntimeError("couldn't read the screen via ddagrab (no display on this machine?)")
+    return f"{len(t)} px sample of monitor 0"
+
+
 def _pipeline_test(ffmpeg: str) -> str:
     """Runs the app's real recording command (test pattern instead of the screen,
     silent PCM on stdin like the audio mixer) and saves a clip from the buffer."""
@@ -441,6 +478,9 @@ def selftest(report: Path) -> int:
 
     check("recording pipeline", lambda: _pipeline_test(ff))
     check("LC Editor", lambda: _editor_test(ff))
+    check("frozen-capture detection", lambda: _freeze_test(ff))
+    if IS_WINDOWS:
+        check("fresh screen look (ddagrab)", lambda: _live_look_test(ff), required=False)
     if IS_WINDOWS:
         check("hotkey (injected, like Stream Deck)", _hotkey_test, required=False)
         check("toast above a borderless always-on-top game", _toast_test, required=False)

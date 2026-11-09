@@ -108,6 +108,8 @@ class App:
         self.hotkey = hotkeys.GlobalHotkey(self.save_clip)
         self._hotkey_warning: str | None = None
         self._saving = False
+        self._retry_job = None
+        self._retry_n = 0
         self.overlay = Overlay(self.root)
 
         self._build_toolbar()
@@ -1160,6 +1162,9 @@ class App:
     def restart(self) -> None:
         if self._busy:
             return
+        if self._retry_job:
+            self.root.after_cancel(self._retry_job)
+            self._retry_job = None
         self._busy = True
         self.bind_hotkey()
         self._set_recording(False)
@@ -1181,7 +1186,9 @@ class App:
                 plan = capture.plan_video(ffmpeg, cfg, mon[1], mon[2])
                 rec = capture.Recorder(cfg, ffmpeg, plan)
                 rec.start()
+                rec.start_freeze_watch(lambda why: self.ui_q.put(lambda: self._recover(why)))
                 self.recorder = rec
+                self._retry_n = 0
                 path = "GPU zero-copy" if plan.gpu_path else "CPU scaling"
                 msg = f"Recording  {plan.width}x{plan.height} @ {cfg.fps} fps  ·  {plan.encoder} ({path})"
                 warn = self._hotkey_warning
@@ -1190,11 +1197,39 @@ class App:
             except Exception as e:
                 log.exception("Start failed")
                 err = str(e)
-                self.ui_q.put(lambda: self.set_status(f"Capture failed: {err}", "error"))
+                self.ui_q.put(lambda: (self.set_status(f"Capture failed: {err} - retrying…", "error"),
+                                       self._schedule_retry()))
             finally:
                 self._busy = False
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ------------------------------------------------------------------ self-healing capture
+    RETRY_DELAYS = (3, 5, 10, 30, 60)
+
+    def _schedule_retry(self) -> None:
+        """Restart capture after a delay that grows with each failure (screen may still be switching modes)."""
+        if self._retry_job or not self.ffmpeg:
+            return
+        delay = self.RETRY_DELAYS[min(self._retry_n, len(self.RETRY_DELAYS) - 1)]
+        self._retry_n += 1
+
+        def go():
+            self._retry_job = None
+            self.monitors = []  # resolution / monitor layout may have changed
+            self.restart()
+
+        self._retry_job = self.root.after(delay * 1000, go)
+        log.info("Capture restart scheduled in %ds (attempt %d)", delay, self._retry_n)
+
+    def _recover(self, why: str) -> None:
+        """Capture froze (game closed, display mode change, lock/sleep): restart it."""
+        if self._busy or self.recorder is None:
+            return
+        log.warning("Recovering capture (%s)", why)
+        self.set_status("Screen capture got stuck (game closed or display changed) - restarting it…", "error")
+        self.monitors = []
+        self.restart()
 
     def _alert(self, title: str, sub: str = "", kind: str = "info", ms: int = 5000) -> None:
         """Thread-safe on-screen toast (respects the setting)."""
@@ -1352,9 +1387,12 @@ class App:
         rec = self.recorder
         if rec is not None and not rec.alive() and not self._busy:
             tail = capture.tail_ffmpeg_log(3)
-            self.set_status(f"FFmpeg stopped unexpectedly: {tail}", "error")
+            log.warning("FFmpeg stopped: %s", tail)
+            self.set_status("Capture stopped (game closed or display changed?) - restarting…", "error")
             self._set_recording(False)
+            rec.stop()
             self.recorder = None
+            self._schedule_retry()
         elif rec is not None and rec.mixer and rec.mixer.errors():
             self.set_status("Audio warning: " + "; ".join(rec.mixer.errors()), "error")
         self.root.after(2000, self._watchdog)

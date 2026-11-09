@@ -251,6 +251,94 @@ def concat_segments(ffmpeg: str, segs: list[Path], out: Path) -> None:
         tmp.unlink(missing_ok=True)
 
 
+# --------------------------------------------------------------------------- frozen-capture detection
+#
+# Desktop Duplication can lose access to the screen (a game exits or changes the
+# display mode, the PC locks or sleeps, a driver resets). ddagrab then keeps
+# repeating the last frame it got instead of failing, so FFmpeg looks healthy
+# while the video is frozen. FreezeWatch notices the recording has stopped
+# changing, takes a fresh look at the screen, and if the screen *has* changed,
+# reports the capture as stale so it gets restarted.
+
+PROBE_W, PROBE_H = 32, 18
+STILL_DIFF = 1.5   # mean abs difference (0-255) below which two samples are "the same picture"
+STALE_DIFF = 8.0   # recorder vs live screen difference that means the recorder is stuck
+
+
+def _small_gray(ffmpeg: str, input_args: list[str]) -> bytes | None:
+    try:
+        r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", *input_args, "-frames:v", "1",
+                            "-vf", f"scale={PROBE_W}:{PROBE_H},format=gray", "-f", "rawvideo", "-"],
+                           stdin=subprocess.DEVNULL, capture_output=True, timeout=15,
+                           creationflags=_popen_flags(low_priority=True))
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    n = PROBE_W * PROBE_H
+    return r.stdout[:n] if r.returncode == 0 and len(r.stdout) >= n else None
+
+
+def segment_thumb(ffmpeg: str, seg: Path) -> bytes | None:
+    """Tiny grayscale copy of a buffer segment's first (key)frame - cheap to decode."""
+    return _small_gray(ffmpeg, ["-skip_frame", "nokey", "-i", str(seg)])
+
+
+def live_thumb(ffmpeg: str, monitor: int) -> bytes | None:
+    """Tiny grayscale copy of what the monitor shows right now (a fresh duplication)."""
+    return _small_gray(ffmpeg, ["-f", "lavfi", "-i",
+                                f"ddagrab=output_idx={monitor}:framerate=5:draw_mouse=0,hwdownload,format=bgra"])
+
+
+def frame_diff(a: bytes, b: bytes) -> float:
+    return sum(abs(x - y) for x, y in zip(a, b)) / max(1, min(len(a), len(b)))
+
+
+class FreezeWatch(threading.Thread):
+    def __init__(self, rec: "Recorder", on_stale, live_probe=None, interval: float = 15.0,
+                 still_after: float = 45.0):
+        super().__init__(daemon=True, name="freeze-watch")
+        self.rec, self.on_stale = rec, on_stale
+        self.live_probe = live_probe or (lambda: live_thumb(rec.ffmpeg, rec.cfg.monitor))
+        self.interval, self.still_after = interval, still_after
+        self._halt = threading.Event()
+
+    def stop(self) -> None:
+        self._halt.set()
+
+    def run(self) -> None:
+        last, still_since = None, None
+        while not self._halt.wait(self.interval):
+            if not self.rec.alive():
+                return
+            segs = completed_segments(BUFFER_DIR)
+            cur = segment_thumb(self.rec.ffmpeg, segs[-1]) if segs else None
+            if cur is None:
+                continue
+            now = time.monotonic()
+            if last is not None and frame_diff(cur, last) < STILL_DIFF:
+                still_since = still_since or now - self.interval
+            else:
+                still_since = None
+            last = cur
+            if still_since is None or now - still_since < self.still_after:
+                continue
+            live = self.live_probe()
+            if live is None:
+                # Can't even look at the screen right now (locked, mode change...). If that
+                # persists, restarting is the best bet.
+                if now - still_since >= self.still_after * 3:
+                    log.warning("Capture frozen and screen unreadable for %.0fs - restarting", now - still_since)
+                    self.on_stale("frozen")
+                    return
+                continue
+            diff = frame_diff(live, cur)
+            if diff > STALE_DIFF:
+                log.warning("Capture frozen: recording unchanged for %.0fs but screen differs (%.1f)",
+                            now - still_since, diff)
+                self.on_stale("frozen")
+                return
+            still_since = now  # the screen really is static - check again later
+
+
 # --------------------------------------------------------------------------- recorder
 
 class Recorder:
@@ -263,6 +351,11 @@ class Recorder:
         self.started_at = 0.0
         self._save_lock = threading.Lock()
         self._log = None
+        self.freeze_watch: FreezeWatch | None = None
+
+    def start_freeze_watch(self, on_stale, **kw) -> None:
+        self.freeze_watch = FreezeWatch(self, on_stale, **kw)
+        self.freeze_watch.start()
 
     def start(self) -> None:
         shutil.rmtree(BUFFER_DIR, ignore_errors=True)
@@ -289,6 +382,8 @@ class Recorder:
         return min(self.cfg.clip_seconds, time.monotonic() - self.started_at)
 
     def stop(self) -> None:
+        if self.freeze_watch:
+            self.freeze_watch.stop()
         if self.mixer:
             self.mixer.stop()
         if self.proc:
